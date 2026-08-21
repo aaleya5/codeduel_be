@@ -1,0 +1,745 @@
+{
+  "info": {
+    "name": "LeetCode Daily Challenge Tracker API",
+    "description": "Complete API collection for testing the LeetCode Daily Challenge Tracker backend\n\n⚠️ TESTING FLOW:\n1. Start with Health Check endpoints (no auth required)\n2. Register a new user or Login (token auto-saves)\n3. All other endpoints require the JWT token from step 2\n4. Store LeetCode session before testing challenge evaluations\n5. Create and join challenges\n6. View dashboard and progress\n\n🔑 The JWT token is automatically saved to {{jwt_token}} variable after login/register",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "challenge_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "🏥 Health Check",
+      "item": [
+        {
+          "name": "Server Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "API Root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": ["{{base_url}}"],
+              "path": [""]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🔐 Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('jwt_token', response.data.token);",
+                  "    pm.collectionVariables.set('user_id', response.data.user.id);",
+                  "    console.log('✅ JWT Token saved:', response.data.token);",
+                  "    console.log('✅ User ID saved:', response.data.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"username\": \"john_doe\",\n  \"password\": \"password123\",\n  \"leetcodeUsername\": \"john_leetcode\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('jwt_token', response.data.token);",
+                  "    pm.collectionVariables.set('user_id', response.data.user.id);",
+                  "    console.log('✅ JWT Token saved:', response.data.token);",
+                  "    console.log('✅ User ID saved:', response.data.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailOrUsername\": \"john_doe\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Check if token exists",
+                  "const token = pm.collectionVariables.get('jwt_token');",
+                  "if (!token || token === '') {",
+                  "    console.error('⚠️ No JWT token found! Please run Login or Register first.');",
+                  "} else {",
+                  "    console.log('✅ Using JWT Token:', token.substring(0, 50) + '...');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "profile"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leetcodeUsername\": \"new_leetcode_username\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "profile"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🎯 Challenges",
+      "item": [
+        {
+          "name": "Create Challenge",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('challenge_id', response.data.id);",
+                  "    console.log('✅ Challenge ID saved:', response.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"January 2026 Daily Challenge\",\n  \"description\": \"Solve at least 1 Medium or Hard problem daily\",\n  \"minSubmissionsPerDay\": 1,\n  \"difficultyFilter\": [\"Medium\", \"Hard\"],\n  \"uniqueProblemConstraint\": true,\n  \"penaltyAmount\": 100,\n  \"startDate\": \"2026-01-07T00:00:00.000Z\",\n  \"endDate\": \"2026-01-31T23:59:59.999Z\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/challenges",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get All User Challenges",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/challenges",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Active Challenges",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/challenges?status=ACTIVE",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Owned Challenges",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/challenges?owned=true",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges"],
+              "query": [
+                {
+                  "key": "owned",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Challenge By ID",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/challenges/{{challenge_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges", "{{challenge_id}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Join Challenge",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/challenges/{{challenge_id}}/join",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges", "{{challenge_id}}", "join"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Challenge Status - Start",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/challenges/{{challenge_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges", "{{challenge_id}}", "status"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Challenge Status - Complete",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"COMPLETED\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/challenges/{{challenge_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "challenges", "{{challenge_id}}", "status"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "📊 Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard Overview",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["api", "dashboard"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Today's Status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard/today",
+              "host": ["{{base_url}}"],
+              "path": ["api", "dashboard", "today"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Challenge Progress",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard/challenge/{{challenge_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "dashboard", "challenge", "{{challenge_id}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Challenge Leaderboard",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard/challenge/{{challenge_id}}/leaderboard",
+              "host": ["{{base_url}}"],
+              "path": [
+                "api",
+                "dashboard",
+                "challenge",
+                "{{challenge_id}}",
+                "leaderboard"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "💻 LeetCode Integration",
+      "item": [
+        {
+          "name": "Store LeetCode Session",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cookie\": \"LEETCODE_SESSION=your_leetcode_session_cookie_here\",\n  \"csrfToken\": \"your_csrf_token_here\",\n  \"expiresAt\": \"2026-02-06T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/session",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "session"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Session Status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/session",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "session"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Invalidate Session",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/session",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "session"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get LeetCode Profile",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/profile/krishnapaljadeja",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "profile", "krishnapaljadeja"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Test LeetCode Connection",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/test/krishnapaljadeja",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "test", "krishnapaljadeja"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Problem Metadata - Two Sum",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/problem/two-sum",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "problem", "two-sum"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Problem Metadata - Add Two Numbers",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{jwt_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/leetcode/problem/add-two-numbers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "leetcode", "problem", "add-two-numbers"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

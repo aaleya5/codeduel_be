@@ -1,14 +1,78 @@
 const { prisma } = require("../config/prisma");
 const leetcodeService = require("./leetcode.service");
 const penaltyService = require("./penalty.service");
+const notificationService = require("./notification.service");
 const logger = require("../utils/logger");
+
+// Safety cap on how many backlog days we'll evaluate for a single member in
+// one run, so a long-dead server or brand-new member with a distant
+// challenge start date can't turn one cron tick into a huge synchronous
+// backfill. Any remainder catches up on subsequent runs.
+const MAX_CATCHUP_DAYS = 14;
+
+/**
+ * Evaluate a single challenge by id for a specific (or default "yesterday")
+ * date. Used by the owner-triggered manual evaluation endpoint, so unlike
+ * runDailyEvaluation this only ever touches one challenge, not every active
+ * challenge in the system.
+ * @param {string} challengeId
+ * @param {Date} [targetDate] - Optional specific date to evaluate instead of "yesterday"
+ */
+const runEvaluationForChallenge = async (challengeId, targetDate = null) => {
+  const evaluationDate = targetDate ? new Date(targetDate) : new Date();
+  if (!targetDate) {
+    evaluationDate.setDate(evaluationDate.getDate() - 1);
+  }
+  evaluationDate.setHours(0, 0, 0, 0);
+
+  const challenge = await prisma.challenge.findUnique({
+    where: { id: challengeId },
+    include: {
+      members: {
+        where: { isActive: true },
+        include: {
+          user: {
+            select: { id: true, username: true, leetcodeUsername: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!challenge) {
+    throw new Error("Challenge not found");
+  }
+
+  logger.info(
+    `Manually evaluating challenge ${challenge.name} for date: ${evaluationDate.toISOString()}`
+  );
+
+  await evaluateChallenge(challenge, evaluationDate);
+};
 
 /**
  * Run daily evaluation for all active challenges
  * This is the main function called by the cron job
+ *
+ * Runs shortly after midnight (see DAILY_EVALUATION_TIME), so by default it
+ * evaluates the day that just ENDED, not the day that just started - members
+ * need the full day to submit before we judge them. Pass an explicit
+ * targetDate (e.g. for a manual re-run or backfill) to override that.
+ *
+ * Also catches up any member who has a gap in their DailyResult history up
+ * to that point (e.g. the server was down and a previous cron run never
+ * fired) - see getMissingEvaluationDates / evaluateChallenge.
+ *
+ * Not exposed directly to users - see runEvaluationForChallenge for the
+ * owner-scoped manual-trigger endpoint.
+ *
+ * @param {Date} [targetDate] - Optional specific date to evaluate instead of "yesterday"
  */
-const runDailyEvaluation = async () => {
-  const evaluationDate = new Date();
+const runDailyEvaluation = async (targetDate = null) => {
+  const evaluationDate = targetDate ? new Date(targetDate) : new Date();
+  if (!targetDate) {
+    evaluationDate.setDate(evaluationDate.getDate() - 1); // Evaluate the day that just ended
+  }
   evaluationDate.setHours(0, 0, 0, 0); // Start of day
 
   logger.info(
@@ -16,12 +80,12 @@ const runDailyEvaluation = async () => {
   );
 
   try {
-    // Get all active challenges
+    // Get all challenges that were active on the evaluation date
     const activeChallenges = await prisma.challenge.findMany({
       where: {
         status: "ACTIVE",
-        startDate: { lte: new Date() },
-        endDate: { gte: new Date() },
+        startDate: { lte: evaluationDate },
+        endDate: { gte: evaluationDate },
       },
       include: {
         members: {
@@ -61,16 +125,34 @@ const runDailyEvaluation = async () => {
 };
 
 /**
- * Evaluate a single challenge for a specific date
+ * Evaluate a single challenge, catching up any member whose evaluation
+ * history has a gap (e.g. the server was down and a cron run was missed)
+ * in addition to the requested date.
  * @param {Object} challenge - Challenge object with members
- * @param {Date} evaluationDate - Date to evaluate
+ * @param {Date} uptoDate - Latest date to evaluate (inclusive)
  */
-const evaluateChallenge = async (challenge, evaluationDate) => {
+const evaluateChallenge = async (challenge, uptoDate) => {
   logger.info(`Evaluating challenge: ${challenge.name} (${challenge.id})`);
 
   for (const member of challenge.members) {
     try {
-      await evaluateMember(challenge, member, evaluationDate);
+      const datesToEvaluate = await getMissingEvaluationDates(
+        challenge,
+        member,
+        uptoDate
+      );
+
+      if (datesToEvaluate.length > 1) {
+        logger.warn(
+          `Member ${member.user.username} has ${datesToEvaluate.length} unevaluated day(s) for "${challenge.name}" - catching up`
+        );
+      }
+
+      // Evaluate oldest-first so streak increments/resets build up in the
+      // correct chronological order.
+      for (const date of datesToEvaluate) {
+        await evaluateMember(challenge, member, date);
+      }
     } catch (error) {
       logger.error(
         `Failed to evaluate member ${member.user.username} for challenge ${challenge.name}:`,
@@ -79,6 +161,40 @@ const evaluateChallenge = async (challenge, evaluationDate) => {
       // Continue with other members
     }
   }
+};
+
+/**
+ * Work out which calendar days (up to and including uptoDate) a member
+ * still needs a DailyResult for, so a missed cron run gets caught up
+ * instead of silently skipped. Starts the day after their most recent
+ * DailyResult, or their join date / the challenge start date (whichever is
+ * later) if they have no results yet. Capped at MAX_CATCHUP_DAYS per call.
+ */
+const getMissingEvaluationDates = async (challenge, member, uptoDate) => {
+  const lastResult = await prisma.dailyResult.findFirst({
+    where: { memberId: member.id },
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+
+  let cursor;
+  if (lastResult) {
+    cursor = new Date(lastResult.date);
+    cursor.setDate(cursor.getDate() + 1);
+  } else {
+    const challengeStart = new Date(challenge.startDate);
+    const memberJoined = new Date(member.joinedAt);
+    cursor = challengeStart > memberJoined ? challengeStart : memberJoined;
+  }
+  cursor.setHours(0, 0, 0, 0);
+
+  const dates = [];
+  while (cursor <= uptoDate && dates.length < MAX_CATCHUP_DAYS) {
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
 };
 
 /**
@@ -203,7 +319,7 @@ const evaluateMember = async (challenge, member, evaluationDate) => {
   );
 
   // Update streak
-  await updateStreak(member.id, completed);
+  const streakResult = await updateStreak(member.id, completed);
 
   // Apply penalty if failed
   if (!completed) {
@@ -213,6 +329,18 @@ const evaluateMember = async (challenge, member, evaluationDate) => {
       evaluationDate,
       `Failed to meet daily requirement: ${submissionsCount}/${challenge.minSubmissionsPerDay} submissions`
     );
+
+    // Notify the member if a real streak just broke (don't bother them for
+    // a "streak" that was already 0)
+    if (streakResult.previousStreak > 0) {
+      await notificationService.createNotification(
+        user.id,
+        "STREAK_BROKEN",
+        "Streak broken",
+        `Your ${streakResult.previousStreak}-day streak in "${challenge.name}" ended - only ${submissionsCount}/${challenge.minSubmissionsPerDay} problems solved.`,
+        challenge.id
+      );
+    }
   }
 
   logger.info(
@@ -250,11 +378,14 @@ const createDailyResult = async (
 
 /**
  * Update member's streak based on completion status
+ * @returns {{previousStreak: number, newStreak: number}}
  */
 const updateStreak = async (memberId, completed) => {
   const member = await prisma.challengeMember.findUnique({
     where: { id: memberId },
   });
+
+  const previousStreak = member.currentStreak;
 
   if (completed) {
     // Increment current streak
@@ -268,15 +399,19 @@ const updateStreak = async (memberId, completed) => {
         longestStreak: newLongest,
       },
     });
-  } else {
-    // Reset current streak
-    await prisma.challengeMember.update({
-      where: { id: memberId },
-      data: {
-        currentStreak: 0,
-      },
-    });
+
+    return { previousStreak, newStreak };
   }
+
+  // Reset current streak
+  await prisma.challengeMember.update({
+    where: { id: memberId },
+    data: {
+      currentStreak: 0,
+    },
+  });
+
+  return { previousStreak, newStreak: 0 };
 };
 
 /**
@@ -331,8 +466,10 @@ const getTodayStatus = async (memberId) => {
 
 module.exports = {
   runDailyEvaluation,
+  runEvaluationForChallenge,
   evaluateChallenge,
   evaluateMember,
+  getMissingEvaluationDates,
   getMemberDailyResults,
   getTodayStatus,
 };

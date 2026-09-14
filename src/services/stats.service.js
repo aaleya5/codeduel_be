@@ -30,31 +30,47 @@ const calculateUserStreak = async (userId) => {
     let longestStreak = 0;
     let tempStreak = 0;
 
-    // Calculate current streak (from most recent day backwards)
-    let currentDate = new Date();
-    currentDate.setHours(0, 0, 0, 0);
+    // Calculate current streak, walking backwards from the most recently
+    // evaluated day (results is already ordered date DESC).
+    //
+    // Daily results only ever exist for days that have already been
+    // evaluated (the cron evaluates "yesterday", never "today" - see
+    // evaluation.service.js), so the most recent result can legitimately be
+    // dated yesterday even while the streak is still active today. Requiring
+    // a same-day result here (as a naive walk from `new Date()` would) means
+    // the streak would always read as broken.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    for (const result of results) {
-      const resultDate = new Date(result.date);
-      resultDate.setHours(0, 0, 0, 0);
-
-      // Check if this is consecutive
-      const daysDiff = Math.floor(
-        (currentDate - resultDate) / (1000 * 60 * 60 * 24)
+    if (results.length > 0) {
+      const mostRecentDate = new Date(results[0].date);
+      mostRecentDate.setHours(0, 0, 0, 0);
+      const daysSinceLatestResult = Math.floor(
+        (today - mostRecentDate) / (1000 * 60 * 60 * 24)
       );
 
-      if (daysDiff === 0 && result.completed) {
-        currentStreak++;
-        tempStreak++;
-      } else if (daysDiff === 1 && currentStreak > 0 && result.completed) {
-        currentStreak++;
-        tempStreak++;
-        currentDate = resultDate;
-      } else {
-        break;
-      }
+      // The streak is only still "current" if the latest evaluated day is
+      // today or yesterday and it was completed - anything older means the
+      // streak already lapsed (a day went by with no evaluation recorded).
+      if (daysSinceLatestResult <= 1 && results[0].completed) {
+        currentStreak = 1;
+        let expectedDate = mostRecentDate;
 
-      currentDate = resultDate;
+        for (let i = 1; i < results.length; i++) {
+          const resultDate = new Date(results[i].date);
+          resultDate.setHours(0, 0, 0, 0);
+          const daysDiff = Math.floor(
+            (expectedDate - resultDate) / (1000 * 60 * 60 * 24)
+          );
+
+          if (daysDiff === 1 && results[i].completed) {
+            currentStreak++;
+            expectedDate = resultDate;
+          } else {
+            break;
+          }
+        }
+      }
     }
 
     // Calculate longest streak
@@ -228,6 +244,129 @@ const getUserSubmissionChart = async (userId) => {
 };
 
 /**
+ * Get submission chart data for a single challenge, aggregated across all
+ * of its members (used for the "Team Progress" chart on the challenge page).
+ * Returns the last `days` days, each with total problems solved by the
+ * whole team that day vs. the challenge's daily target.
+ */
+const getChallengeSubmissionChart = async (challengeId, days = 30) => {
+  try {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+
+    const challenge = await prisma.challenge.findUnique({
+      where: { id: challengeId },
+      select: { minSubmissionsPerDay: true },
+    });
+
+    const results = await prisma.dailyResult.findMany({
+      where: {
+        challengeId,
+        date: { gte: startDate },
+      },
+      select: {
+        date: true,
+        submissionsCount: true,
+      },
+    });
+
+    // Sum every member's submissions for each calendar day
+    const chartMap = {};
+    results.forEach((result) => {
+      const dateKey = result.date.toISOString().split("T")[0];
+      chartMap[dateKey] = (chartMap[dateKey] || 0) + (result.submissionsCount || 0);
+    });
+
+    // Fill in every day in the range, including days with no data
+    const chartData = [];
+    const cursor = new Date(startDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    while (cursor <= today) {
+      const dateKey = cursor.toISOString().split("T")[0];
+      chartData.push({
+        date: dateKey,
+        solved: chartMap[dateKey] || 0,
+        target: challenge?.minSubmissionsPerDay || 1,
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return chartData;
+  } catch (error) {
+    logger.error("Error fetching challenge submission chart:", error);
+    return [];
+  }
+};
+
+/**
+ * Get the global leaderboard: every user who has joined at least one
+ * challenge, ranked across their entire history (not scoped to a single
+ * challenge - see dashboard.controller.getChallengeLeaderboard for that).
+ *
+ * Ranking priority: total problems solved > current streak > lowest penalties.
+ */
+const getGlobalLeaderboard = async (limit = 50) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        memberships: { some: {} },
+      },
+      select: {
+        id: true,
+        username: true,
+      },
+    });
+
+    const entries = await Promise.all(
+      users.map(async (user) => {
+        const [streaks, totalSubmissions, missedDays, totalPenalties] =
+          await Promise.all([
+            calculateUserStreak(user.id),
+            prisma.dailyResult.aggregate({
+              where: { member: { userId: user.id } },
+              _sum: { submissionsCount: true },
+            }),
+            prisma.dailyResult.count({
+              where: { member: { userId: user.id }, completed: false },
+            }),
+            prisma.penaltyLedger.aggregate({
+              where: { member: { userId: user.id } },
+              _sum: { amount: true },
+            }),
+          ]);
+
+        return {
+          userId: user.id,
+          userName: user.username,
+          totalSolved: totalSubmissions._sum.submissionsCount || 0,
+          currentStreak: streaks.currentStreak,
+          missedDays,
+          penaltyAmount: totalPenalties._sum.amount || 0,
+        };
+      })
+    );
+
+    entries.sort((a, b) => {
+      if (b.totalSolved !== a.totalSolved) return b.totalSolved - a.totalSolved;
+      if (b.currentStreak !== a.currentStreak)
+        return b.currentStreak - a.currentStreak;
+      return a.penaltyAmount - b.penaltyAmount;
+    });
+
+    return entries.slice(0, limit).map((entry, index) => ({
+      rank: index + 1,
+      ...entry,
+    }));
+  } catch (error) {
+    logger.error("Error fetching global leaderboard:", error);
+    return [];
+  }
+};
+
+/**
  * Get comprehensive user stats
  */
 const getUserStats = async (userId) => {
@@ -281,5 +420,7 @@ module.exports = {
   calculateUserStreak,
   getUserActivityHeatmap,
   getUserSubmissionChart,
+  getChallengeSubmissionChart,
   getUserStats,
+  getGlobalLeaderboard,
 };

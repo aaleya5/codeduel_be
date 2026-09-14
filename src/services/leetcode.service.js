@@ -98,7 +98,8 @@ const USER_SUBMISSIONS_QUERY = `
  */
 const fetchUserSubmissions = async (
   leetcodeUsername,
-  sessionData = null
+  sessionData = null,
+  limit = 20
 ) => {
   try {
     const headers = {
@@ -123,14 +124,14 @@ const fetchUserSubmissions = async (
       }
     }
 
-    // Fetch recent submissions (up to 100)
+    // Fetch recent accepted submissions
     const response = await axios.post(
       config.leetcodeGraphqlUrl,
       {
         query: RECENT_SUBMISSIONS_QUERY,
         variables: {
           username: leetcodeUsername,
-          limit: 10,
+          limit,
         },
       },
       { headers, timeout: 10000 }
@@ -249,21 +250,50 @@ const storeUserSession = async (userId, sessionData, expiresAt = null) => {
 
 /**
  * Fetch submissions for a specific date (helper function)
+ *
+ * LeetCode's API only exposes a "recent submissions" list, not a date-scoped
+ * endpoint, so we fetch a larger recent batch and filter it down to the
+ * requested day ourselves using each submission's unix timestamp. Without
+ * this filter, any accepted submission ever made by the user (even from
+ * before the challenge started) would count toward every day's requirement.
+ *
  * @param {string} leetcodeUsername - LeetCode username
- * @param {Date} date - Date to fetch submissions for
+ * @param {Date} date - Date to fetch submissions for (day boundary is used,
+ *                       time-of-day is ignored)
  * @param {string} sessionData - Optional session data
- * @returns {Array} Submissions for the date
+ * @returns {Array} Submissions whose accepted timestamp falls within [date 00:00, date 23:59:59]
  */
 const fetchSubmissionsForDate = async (
   leetcodeUsername,
   date,
   sessionData = null
 ) => {
-
-  return await fetchUserSubmissions(
+  // Fetch a wider recent window since a very active day could push older
+  // same-day submissions past a small "recent" cutoff.
+  const recentSubmissions = await fetchUserSubmissions(
     leetcodeUsername,
-    sessionData
+    sessionData,
+    100
   );
+
+  const dayStart = new Date(date);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  const dayStartSec = Math.floor(dayStart.getTime() / 1000);
+  const dayEndSec = Math.floor(dayEnd.getTime() / 1000);
+
+  const submissionsForDate = recentSubmissions.filter((sub) => {
+    const ts = parseInt(sub.timestamp, 10);
+    return ts >= dayStartSec && ts < dayEndSec;
+  });
+
+  logger.debug(
+    `${leetcodeUsername}: ${submissionsForDate.length}/${recentSubmissions.length} recent submissions fall on ${dayStart.toISOString().slice(0, 10)}`
+  );
+
+  return submissionsForDate;
 };
 
 /**

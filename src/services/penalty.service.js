@@ -371,20 +371,42 @@ const applyPenalty = async (memberId, amount, reason, date = new Date()) => {
     throw new AppError("Membership not found", 404);
   }
 
-  const [penalty] = await prisma.$transaction([
-    prisma.penaltyLedger.create({
+  const penalty = await prisma.$transaction(async (transaction) => {
+    const balanceUpdate = await transaction.challengeMember.updateMany({
+      where: {
+        id: memberId,
+        totalPenalties:
+          amount < 0
+            ? {
+                equals: member.totalPenalties,
+                gte:
+                  member.totalPaid +
+                  member.reservedPayments -
+                  amount,
+              }
+            : member.totalPenalties,
+        totalPaid: member.totalPaid,
+        reservedPayments: member.reservedPayments,
+      },
+      data: { totalPenalties: { increment: amount } },
+    });
+
+    if (balanceUpdate.count !== 1) {
+      throw new AppError(
+        "This adjustment would reduce the balance below payments already made or reserved",
+        409
+      );
+    }
+
+    return transaction.penaltyLedger.create({
       data: {
         memberId,
         amount,
         reason: reason.trim(),
         date,
       },
-    }),
-    prisma.challengeMember.update({
-      where: { id: memberId },
-      data: { totalPenalties: { increment: amount } },
-    }),
-  ]);
+    });
+  });
 
   if (amount > 0) {
     await notificationService.createNotification(
@@ -526,34 +548,55 @@ const resolveDispute = async (ownerId, penaltyId, action, note) => {
   const disputeStatus =
     action === "WAIVE" ? "RESOLVED_WAIVED" : "RESOLVED_UPHELD";
 
-  const updates = [
-    prisma.penaltyLedger.update({
-      where: { id: penaltyId },
+  const resolvedPenalty = await prisma.$transaction(async (transaction) => {
+    const resolved = await transaction.penaltyLedger.updateMany({
+      where: { id: penaltyId, disputeStatus: "PENDING" },
       data: {
         disputeStatus,
         resolutionNote: note?.trim() || null,
       },
-    }),
-  ];
+    });
+    if (resolved.count !== 1) {
+      throw new AppError("This penalty dispute has already been resolved", 409);
+    }
 
-  if (action === "WAIVE" && penalty.amount > 0) {
-    updates.push(
-      prisma.penaltyLedger.create({
+    if (action === "WAIVE" && penalty.amount > 0) {
+      const memberUpdate = await transaction.challengeMember.updateMany({
+        where: {
+          id: penalty.memberId,
+          totalPenalties: {
+            equals: penalty.member.totalPenalties,
+            gte:
+              penalty.member.totalPaid +
+              penalty.member.reservedPayments +
+              penalty.amount,
+          },
+          totalPaid: penalty.member.totalPaid,
+          reservedPayments: penalty.member.reservedPayments,
+        },
+        data: { totalPenalties: { decrement: penalty.amount } },
+      });
+      if (memberUpdate.count !== 1) {
+        throw new AppError(
+          "This penalty cannot be waived because part of the balance has already been paid or reserved",
+          409
+        );
+      }
+
+      await transaction.penaltyLedger.create({
         data: {
           memberId: penalty.memberId,
           amount: -penalty.amount,
           reason: `Dispute waived: ${penalty.reason}`,
           date: new Date(),
         },
-      }),
-      prisma.challengeMember.update({
-        where: { id: penalty.memberId },
-        data: { totalPenalties: { decrement: penalty.amount } },
-      })
-    );
-  }
+      });
+    }
 
-  const [resolvedPenalty] = await prisma.$transaction(updates);
+    return transaction.penaltyLedger.findUnique({
+      where: { id: penaltyId },
+    });
+  });
 
   await notificationService.createNotification(
     penalty.member.user.id,

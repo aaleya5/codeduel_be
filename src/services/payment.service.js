@@ -21,12 +21,22 @@ const getClient = () => {
 
 /**
  * A member's outstanding penalty balance - what they still owe after
- * subtracting what they've already paid. Never negative (a member can't
- * have "negative debt" from overpaying; extra payments simply aren't
- * possible since createOrder caps the order amount at this value).
+ * subtracting what they've already paid. Pending Razorpay orders reserve
+ * part of this balance until they are verified.
  */
 const getOutstandingBalance = (member) =>
   Math.max(0, member.totalPenalties - member.totalPaid);
+
+const getUnreservedBalance = (member) =>
+  Math.max(
+    0,
+    member.totalPenalties - member.totalPaid - (member.reservedPayments || 0)
+  );
+
+const floorToPaisa = (amount) =>
+  Math.floor(
+    amount * 100 + Number.EPSILON * Math.max(1, Math.abs(amount)) * 100
+  ) / 100;
 
 /**
  * Create a Razorpay order for a member to pay down their outstanding
@@ -50,19 +60,23 @@ const createOrder = async (userId, memberId, amount) => {
     throw new AppError("You can only pay down your own penalty balance", 403);
   }
 
-  if (typeof amount !== "number" || isNaN(amount) || amount <= 0) {
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
     throw new AppError("A positive amount is required", 400);
   }
 
-  const outstanding = getOutstandingBalance(member);
-  if (outstanding <= 0) {
+  const unreservedBalance = getUnreservedBalance(member);
+  if (unreservedBalance <= 0) {
     throw new AppError("This membership has no outstanding balance", 400);
   }
 
-  // Cap the order at what's actually owed - a client-supplied amount is
-  // never trusted past this point, so overpaying (accidentally or not)
-  // isn't possible.
-  const chargeable = Math.min(amount, outstanding);
+  const requestedAmount = Math.round(amount * 100) / 100;
+  const chargeable = Math.min(
+    requestedAmount,
+    floorToPaisa(unreservedBalance)
+  );
+  if (chargeable <= 0) {
+    throw new AppError("The available balance is less than one paisa", 400);
+  }
 
   const client = getClient();
   const order = await client.orders.create({
@@ -72,14 +86,38 @@ const createOrder = async (userId, memberId, amount) => {
     notes: { memberId, challengeId: member.challengeId },
   });
 
-  await prisma.payment.create({
-    data: {
-      memberId,
-      amount: chargeable,
-      currency: "INR",
-      status: "PENDING",
-      razorpayOrderId: order.id,
-    },
+  await prisma.$transaction(async (transaction) => {
+    const reservation = await transaction.challengeMember.updateMany({
+      where: {
+        id: memberId,
+        totalPenalties: member.totalPenalties,
+        totalPaid: member.totalPaid,
+        reservedPayments: {
+          lte:
+            member.totalPenalties -
+            member.totalPaid -
+            chargeable,
+        },
+      },
+      data: { reservedPayments: { increment: chargeable } },
+    });
+
+    if (reservation.count !== 1) {
+      throw new AppError(
+        "The available balance changed. Refresh the balance and try again.",
+        409
+      );
+    }
+
+    await transaction.payment.create({
+      data: {
+        memberId,
+        amount: chargeable,
+        currency: "INR",
+        status: "PENDING",
+        razorpayOrderId: order.id,
+      },
+    });
   });
 
   logger.info(
@@ -138,10 +176,6 @@ const verifyPayment = async (userId, payload) => {
   const isValid = expectedSignature === razorpay_signature;
 
   if (!isValid) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "FAILED", razorpayPaymentId: razorpay_payment_id },
-    });
     logger.warn(`Payment signature mismatch for order ${razorpay_order_id}`);
     throw new AppError("Payment verification failed", 400);
   }
@@ -168,7 +202,10 @@ const verifyPayment = async (userId, payload) => {
 
     await transaction.challengeMember.update({
       where: { id: payment.memberId },
-      data: { totalPaid: { increment: payment.amount } },
+      data: {
+        totalPaid: { increment: payment.amount },
+        reservedPayments: { decrement: payment.amount },
+      },
     });
 
     return {
@@ -264,47 +301,68 @@ const recordManualPayment = async (ownerId, challengeId, memberId, amount, note)
     throw new AppError("You cannot record a payment against your own membership", 403);
   }
 
-  if (typeof amount !== "number" || isNaN(amount) || amount <= 0) {
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
     throw new AppError("A positive amount is required", 400);
   }
 
-  const outstanding = getOutstandingBalance(member);
-  if (amount > outstanding) {
+  const unreservedBalance = getUnreservedBalance(member);
+  const normalizedAmount = Math.round(amount * 100) / 100;
+  if (normalizedAmount <= 0) {
+    throw new AppError("A payment must be at least one paisa", 400);
+  }
+  if (normalizedAmount > unreservedBalance) {
     throw new AppError(
-      `Amount exceeds outstanding balance of ${outstanding}`,
+      `Amount exceeds available balance of ${unreservedBalance}`,
       400
     );
   }
 
-  const [payment] = await prisma.$transaction([
-    prisma.payment.create({
+  const payment = await prisma.$transaction(async (transaction) => {
+    const balanceUpdate = await transaction.challengeMember.updateMany({
+      where: {
+        id: memberId,
+        totalPenalties: member.totalPenalties,
+        totalPaid: member.totalPaid,
+        reservedPayments: {
+          lte: member.totalPenalties - member.totalPaid - normalizedAmount,
+        },
+      },
+      data: { totalPaid: { increment: normalizedAmount } },
+    });
+    if (balanceUpdate.count !== 1) {
+      throw new AppError(
+        "The available balance changed. Refresh the balance and try again.",
+        409
+      );
+    }
+
+    return transaction.payment.create({
       data: {
         memberId,
-        amount,
+        amount: normalizedAmount,
         status: "PAID",
         method: "MANUAL",
         recordedBy: ownerId,
         note: note?.trim() || null,
       },
-    }),
-    prisma.challengeMember.update({
-      where: { id: memberId },
-      data: { totalPaid: { increment: amount } },
-    }),
-  ]);
+    });
+  });
 
   await notificationService.createNotification(
     member.userId,
     "PAYMENT_RECEIVED",
     "Payment recorded",
-    `The challenge owner recorded a payment of Rs. ${amount} from you${note ? ` (${note.trim()})` : ""}.`,
+    `The challenge owner recorded a payment of Rs. ${normalizedAmount} from you${note ? ` (${note.trim()})` : ""}.`,
     challengeId
   );
 
-  emitToUser(member.userId, "payment:confirmed", { memberId, amount });
+  emitToUser(member.userId, "payment:confirmed", {
+    memberId,
+    amount: normalizedAmount,
+  });
 
   logger.info(
-    `Manual payment of ${amount} INR recorded for member ${memberId} by owner ${ownerId}`
+    `Manual payment of ${normalizedAmount} INR recorded for member ${memberId} by owner ${ownerId}`
   );
 
   return payment;

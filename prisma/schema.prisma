@@ -71,6 +71,7 @@ model ChallengeMember {
   longestStreak     Int              @default(0)
   totalPenalties    Float            @default(0)
   totalPaid         Float            @default(0)
+  reservedPayments Float            @default(0)
   
   // Relations
   challenge         Challenge        @relation(fields: [challengeId], references: [id], onDelete: Cascade)

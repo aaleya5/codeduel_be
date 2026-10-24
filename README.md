@@ -138,6 +138,14 @@ Challenge calendar dates and evaluation cutoffs use `CHALLENGE_TIME_ZONE`
 this same zone, so evaluations run at the configured `DAILY_EVALUATION_TIME`
 in the challenge time zone. Run the automated backend tests with `npm test`.
 
+Apply database changes with `npm run prisma:migrate` before starting the
+updated backend. Payment orders reserve their amount against the member's
+outstanding balance; concurrent orders and manual payments cannot consume the
+same balance. A payment with an invalid verification signature remains pending
+so an unauthenticated/invalid callback cannot release its reservation. Pending
+orders still need provider-webhook reconciliation or a verified expiry process
+before their reservations can be released automatically.
+
 ### Automated tests
 
 Run `npm test` from `codeduel_be`. Tests use Node's built-in test runner and

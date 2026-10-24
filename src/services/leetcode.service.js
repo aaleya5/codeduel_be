@@ -3,6 +3,11 @@ const { config } = require("../config/env");
 const { prisma } = require("../config/prisma");
 const { encrypt, decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
+const {
+  CHALLENGE_TIME_ZONE,
+  getDayBoundsInTimeZone,
+  dateKeyForDatabaseDate,
+} = require("../utils/challenge-date");
 
 // LeetCode GraphQL API endpoint
 const LEETCODE_GRAPHQL_URL = "https://leetcode.com/graphql/";
@@ -276,10 +281,11 @@ const fetchSubmissionsForDate = async (
     100
   );
 
-  const dayStart = new Date(date);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setDate(dayEnd.getDate() + 1);
+  const dateKey = dateKeyForDatabaseDate(date);
+  const { start: dayStart, end: dayEnd } = getDayBoundsInTimeZone(
+    dateKey,
+    CHALLENGE_TIME_ZONE
+  );
 
   const dayStartSec = Math.floor(dayStart.getTime() / 1000);
   const dayEndSec = Math.floor(dayEnd.getTime() / 1000);
@@ -290,7 +296,7 @@ const fetchSubmissionsForDate = async (
   });
 
   logger.debug(
-    `${leetcodeUsername}: ${submissionsForDate.length}/${recentSubmissions.length} recent submissions fall on ${dayStart.toISOString().slice(0, 10)}`
+    `${leetcodeUsername}: ${submissionsForDate.length}/${recentSubmissions.length} recent submissions fall on ${dateKey} (${CHALLENGE_TIME_ZONE})`
   );
 
   return submissionsForDate;
@@ -307,9 +313,10 @@ const fetchAcceptedSubmissionsForCalendarDate = async (
     100
   );
 
-  const dayStart = new Date(`${date}T00:00:00.000Z`);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+  const { start: dayStart, end: dayEnd } = getDayBoundsInTimeZone(
+    date,
+    CHALLENGE_TIME_ZONE
+  );
 
   const dayStartSec = Math.floor(dayStart.getTime() / 1000);
   const dayEndSec = Math.floor(dayEnd.getTime() / 1000);

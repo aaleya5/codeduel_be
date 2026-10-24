@@ -4,6 +4,11 @@ const logger = require("../utils/logger");
 const penaltyService = require("./penalty.service");
 const notificationService = require("./notification.service");
 const { emitToChallenge } = require("../config/socket");
+const {
+  dateKeyForDatabaseDate,
+  databaseDateForKey,
+  getTodayDateKey,
+} = require("../utils/challenge-date");
 
 /**
  * Create a new challenge
@@ -24,17 +29,18 @@ const createChallenge = async (userId, challengeData) => {
   } = challengeData;
 
   // Validate dates
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  const now = new Date();
+  const startDateKey = dateKeyForDatabaseDate(new Date(startDate));
+  const endDateKey = dateKeyForDatabaseDate(new Date(endDate));
 
-  if (start < now) {
+  if (startDateKey <= getTodayDateKey()) {
     throw new AppError("Start date must be in the future", 400);
   }
 
-  if (end <= start) {
+  if (endDateKey <= startDateKey) {
     throw new AppError("End date must be after start date", 400);
   }
+  const start = databaseDateForKey(startDateKey);
+  const end = databaseDateForKey(endDateKey);
 
   // Validate difficulty filter
   const validDifficulties = ["Easy", "Medium", "Hard"];
@@ -520,11 +526,11 @@ const updateChallengeRules = async (challengeId, userId, updates) => {
   }
 
   if (data.endDate) {
-    const newEnd = new Date(data.endDate);
-    if (newEnd <= challenge.startDate) {
+    const newEndDateKey = dateKeyForDatabaseDate(new Date(data.endDate));
+    if (newEndDateKey <= dateKeyForDatabaseDate(challenge.startDate)) {
       throw new AppError("End date must be after the start date", 400);
     }
-    data.endDate = newEnd;
+    data.endDate = databaseDateForKey(newEndDateKey);
   }
 
   const updatedChallenge = await prisma.challenge.update({
@@ -654,14 +660,11 @@ const adjustMemberPenalty = async (challengeId, userId, memberId, amount, reason
     throw new AppError("A reason is required for penalty adjustments", 400);
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   return await penaltyService.applyPenalty(
     memberId,
     amount,
     `Owner adjustment: ${reason.trim()}`,
-    today
+    databaseDateForKey(getTodayDateKey())
   );
 };
 

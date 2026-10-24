@@ -3,6 +3,13 @@ const evaluationService = require("../services/evaluation.service");
 const penaltyService = require("../services/penalty.service");
 const statsService = require("../services/stats.service");
 const { asyncHandler } = require("../middlewares/error.middleware");
+const {
+  CHALLENGE_TIME_ZONE,
+  databaseDateForKey,
+  getTodayDateKey,
+  getYesterdayDateKey,
+  isDateKey,
+} = require("../utils/challenge-date");
 
 /**
  * Get dashboard overview for current user
@@ -35,8 +42,7 @@ const getDashboard = asyncHandler(async (req, res) => {
   });
 
   // Get today's status for each membership
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = databaseDateForKey(getTodayDateKey());
 
   const dashboardData = await Promise.all(
     memberships.map(async (membership) => {
@@ -227,8 +233,7 @@ const getChallengeLeaderboard = asyncHandler(async (req, res) => {
  */
 const getTodayStatus = asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = databaseDateForKey(getTodayDateKey());
 
   // Get all active memberships
   const memberships = await prisma.challengeMember.findMany({
@@ -369,20 +374,26 @@ const triggerEvaluation = asyncHandler(async (req, res) => {
     });
   }
 
-  const targetDate = date ? new Date(date) : null;
-
-  if (date && isNaN(targetDate?.getTime())) {
+  if (date && !isDateKey(date)) {
     return res.status(400).json({
       success: false,
       message: "Invalid date format. Use YYYY-MM-DD.",
     });
   }
 
-  await evaluationService.runEvaluationForChallenge(challengeId, targetDate);
+  const targetDateKey = date || getYesterdayDateKey();
+  if (targetDateKey >= getTodayDateKey()) {
+    return res.status(400).json({
+      success: false,
+      message: `Only completed challenge days before today (${CHALLENGE_TIME_ZONE}) can be evaluated`,
+    });
+  }
+
+  await evaluationService.runEvaluationForChallenge(challengeId, targetDateKey);
 
   res.status(200).json({
     success: true,
-    message: `Evaluation triggered${date ? ` for ${date}` : " for yesterday"}`,
+    message: `Evaluation triggered for ${targetDateKey} (${CHALLENGE_TIME_ZONE})`,
   });
 });
 

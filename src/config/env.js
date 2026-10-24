@@ -25,6 +25,7 @@ const config = {
   // Cron Configuration
   cronEnabled: process.env.CRON_ENABLED === "true",
   dailyEvaluationTime: process.env.DAILY_EVALUATION_TIME || "0 1 * * *", // 1 AM daily
+  challengeTimeZone: process.env.CHALLENGE_TIME_ZONE || "Asia/Kolkata",
 
   // Razorpay Configuration (penalty payments)
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -42,6 +43,14 @@ const validateConfig = () => {
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}`
+    );
+  }
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: config.challengeTimeZone });
+  } catch {
+    throw new Error(
+      `Invalid CHALLENGE_TIME_ZONE: ${config.challengeTimeZone}`
     );
   }
 };

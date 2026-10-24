@@ -31,7 +31,7 @@ class CronManager {
       },
       {
         scheduled: true,
-        timezone: "UTC", // Use UTC or configure based on requirements
+        timezone: config.challengeTimeZone,
       }
     );
 
@@ -41,7 +41,7 @@ class CronManager {
     });
 
     logger.info(
-      `Cron jobs initialized. Daily evaluation scheduled at: ${config.dailyEvaluationTime}`
+      `Cron jobs initialized at ${config.dailyEvaluationTime} (${config.challengeTimeZone})`
     );
   }
 

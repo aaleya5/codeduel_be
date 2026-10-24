@@ -2,6 +2,9 @@
 
 A production-ready backend application for tracking LeetCode daily challenges with automated evaluation, streak tracking, and penalty management.
 
+For the prioritized gap analysis, verification checklist, product roadmap, and
+academic deliverables, see the [CodeDuel project roadmap](../PROJECT_ROADMAP.md).
+
 ## 🚀 Features
 
 - **User Authentication**: JWT-based authentication with secure password hashing
@@ -94,6 +97,7 @@ src/
    - `DATABASE_URL`: PostgreSQL connection string
    - `JWT_SECRET`: Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
    - `ENCRYPTION_KEY`: Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+   - `CHALLENGE_TIME_ZONE`: IANA time zone for challenge-day boundaries, evaluation, and streaks (defaults to `Asia/Kolkata`)
    - Other configuration as needed
 
 4. **Set up database**
@@ -128,6 +132,11 @@ src/
    ```
 
 The server will start on `http://localhost:3000` (or the port specified in `.env`).
+
+Challenge calendar dates and evaluation cutoffs use `CHALLENGE_TIME_ZONE`
+(default `Asia/Kolkata`); persisted timestamps remain UTC. The cron job uses
+this same zone, so evaluations run at the configured `DAILY_EVALUATION_TIME`
+in the challenge time zone. Run the automated backend tests with `npm test`.
 
 ## 📡 API Endpoints
 

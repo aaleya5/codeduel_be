@@ -4,6 +4,16 @@ const penaltyService = require("./penalty.service");
 const notificationService = require("./notification.service");
 const { emitToChallenge, emitBroadcast } = require("../config/socket");
 const logger = require("../utils/logger");
+const {
+  CHALLENGE_TIME_ZONE,
+  addCalendarDays,
+  dateKeyForDatabaseDate,
+  dateKeyForInstant,
+  databaseDateForKey,
+  getDayBoundsInTimeZone,
+  getYesterdayDateKey,
+  isDateKey,
+} = require("../utils/challenge-date");
 
 // Safety cap on how many backlog days we'll evaluate for a single member in
 // one run, so a long-dead server or brand-new member with a distant
@@ -20,11 +30,10 @@ const MAX_CATCHUP_DAYS = 14;
  * @param {Date} [targetDate] - Optional specific date to evaluate instead of "yesterday"
  */
 const runEvaluationForChallenge = async (challengeId, targetDate = null) => {
-  const evaluationDate = targetDate ? new Date(targetDate) : new Date();
-  if (!targetDate) {
-    evaluationDate.setDate(evaluationDate.getDate() - 1);
-  }
-  evaluationDate.setHours(0, 0, 0, 0);
+  const dateKey = targetDate
+    ? getTargetDateKey(targetDate)
+    : getYesterdayDateKey();
+  const evaluationDate = databaseDateForKey(dateKey);
 
   const challenge = await prisma.challenge.findUnique({
     where: { id: challengeId },
@@ -45,7 +54,7 @@ const runEvaluationForChallenge = async (challengeId, targetDate = null) => {
   }
 
   logger.info(
-    `Manually evaluating challenge ${challenge.name} for date: ${evaluationDate.toISOString()}`
+    `Manually evaluating challenge ${challenge.name} for date: ${dateKey} (${CHALLENGE_TIME_ZONE})`
   );
 
   await evaluateChallenge(challenge, evaluationDate);
@@ -70,14 +79,17 @@ const runEvaluationForChallenge = async (challengeId, targetDate = null) => {
  * @param {Date} [targetDate] - Optional specific date to evaluate instead of "yesterday"
  */
 const runDailyEvaluation = async (targetDate = null) => {
-  const evaluationDate = targetDate ? new Date(targetDate) : new Date();
-  if (!targetDate) {
-    evaluationDate.setDate(evaluationDate.getDate() - 1); // Evaluate the day that just ended
-  }
-  evaluationDate.setHours(0, 0, 0, 0); // Start of day
+  const dateKey = targetDate
+    ? getTargetDateKey(targetDate)
+    : getYesterdayDateKey();
+  const evaluationDate = databaseDateForKey(dateKey);
+  const { start: dayStart, end: dayEnd } = getDayBoundsInTimeZone(
+    dateKey,
+    CHALLENGE_TIME_ZONE
+  );
 
   logger.info(
-    `Starting daily evaluation for date: ${evaluationDate.toISOString()}`
+    `Starting daily evaluation for date: ${dateKey} (${CHALLENGE_TIME_ZONE})`
   );
 
   try {
@@ -85,8 +97,8 @@ const runDailyEvaluation = async (targetDate = null) => {
     const activeChallenges = await prisma.challenge.findMany({
       where: {
         status: "ACTIVE",
-        startDate: { lte: evaluationDate },
-        endDate: { gte: evaluationDate },
+        startDate: { lt: dayEnd },
+        endDate: { gte: dayStart },
       },
       include: {
         members: {
@@ -133,6 +145,7 @@ const runDailyEvaluation = async (targetDate = null) => {
  * @param {Date} uptoDate - Latest date to evaluate (inclusive)
  */
 const evaluateChallenge = async (challenge, uptoDate) => {
+  const uptoDateKey = dateKeyForDatabaseDate(uptoDate);
   logger.info(`Evaluating challenge: ${challenge.name} (${challenge.id})`);
 
   let anyEvaluated = false;
@@ -142,7 +155,7 @@ const evaluateChallenge = async (challenge, uptoDate) => {
       const datesToEvaluate = await getMissingEvaluationDates(
         challenge,
         member,
-        uptoDate
+        uptoDateKey
       );
 
       if (datesToEvaluate.length > 1) {
@@ -192,21 +205,29 @@ const getMissingEvaluationDates = async (challenge, member, uptoDate) => {
     select: { date: true },
   });
 
-  let cursor;
+  const uptoDateKey =
+    typeof uptoDate === "string"
+      ? uptoDate
+      : dateKeyForDatabaseDate(uptoDate);
+  let cursorKey;
   if (lastResult) {
-    cursor = new Date(lastResult.date);
-    cursor.setDate(cursor.getDate() + 1);
+    cursorKey = addCalendarDays(
+      dateKeyForDatabaseDate(lastResult.date),
+      1
+    );
   } else {
-    const challengeStart = new Date(challenge.startDate);
-    const memberJoined = new Date(member.joinedAt);
-    cursor = challengeStart > memberJoined ? challengeStart : memberJoined;
+    const challengeStart = dateKeyForDatabaseDate(challenge.startDate);
+    const memberJoined = dateKeyForInstant(
+      member.joinedAt,
+      CHALLENGE_TIME_ZONE
+    );
+    cursorKey = challengeStart > memberJoined ? challengeStart : memberJoined;
   }
-  cursor.setHours(0, 0, 0, 0);
 
   const dates = [];
-  while (cursor <= uptoDate && dates.length < MAX_CATCHUP_DAYS) {
-    dates.push(new Date(cursor));
-    cursor.setDate(cursor.getDate() + 1);
+  while (cursorKey <= uptoDateKey && dates.length < MAX_CATCHUP_DAYS) {
+    dates.push(databaseDateForKey(cursorKey));
+    cursorKey = addCalendarDays(cursorKey, 1);
   }
 
   return dates;
@@ -463,8 +484,7 @@ const getMemberDailyResults = async (memberId, limit = 30) => {
  * @returns {Object|null} Today's daily result or null
  */
 const getTodayStatus = async (memberId) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = databaseDateForKey(dateKeyForInstant(new Date()));
 
   return await prisma.dailyResult.findUnique({
     where: {
@@ -477,6 +497,13 @@ const getTodayStatus = async (memberId) => {
       },
     },
   });
+};
+
+const getTargetDateKey = (targetDate) => {
+  if (typeof targetDate === "string" && isDateKey(targetDate)) {
+    return targetDate;
+  }
+  return dateKeyForInstant(new Date(targetDate), CHALLENGE_TIME_ZONE);
 };
 
 module.exports = {

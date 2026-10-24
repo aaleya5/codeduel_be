@@ -1,27 +1,15 @@
 const { prisma } = require("../config/prisma");
 const logger = require("../utils/logger");
-
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const {
+  addCalendarDays,
+  dateKeyForDatabaseDate,
+  databaseDateForKey,
+  getTodayDateKey,
+  calculateStreaksFromResults,
+} = require("../utils/challenge-date");
 
 const toLocalDateKey = (value) => {
-  const date = value instanceof Date ? value : new Date(value);
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-
-  const year = normalized.getFullYear();
-  const month = String(normalized.getMonth() + 1).padStart(2, "0");
-  const day = String(normalized.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-};
-
-const diffInDays = (left, right) => {
-  const startLeft = new Date(left);
-  const startRight = new Date(right);
-  startLeft.setHours(0, 0, 0, 0);
-  startRight.setHours(0, 0, 0, 0);
-
-  return Math.round((startLeft - startRight) / DAY_IN_MS);
+  return dateKeyForDatabaseDate(value);
 };
 
 /**
@@ -44,74 +32,7 @@ const calculateUserStreak = async (userId) => {
       },
     });
 
-    if (results.length === 0) {
-      return { currentStreak: 0, longestStreak: 0 };
-    }
-
-    const normalized = results
-      .map((result) => ({
-        date: new Date(result.date),
-        completed: Boolean(result.completed),
-      }))
-      .sort((a, b) => a.date - b.date);
-
-    let longestStreak = 0;
-    let tempStreak = 0;
-    let prevDate = null;
-
-    for (const result of normalized) {
-      const resultDate = new Date(result.date);
-      resultDate.setHours(0, 0, 0, 0);
-
-      if (result.completed) {
-        if (!prevDate || diffInDays(resultDate, prevDate) === 1) {
-          tempStreak += 1;
-          longestStreak = Math.max(longestStreak, tempStreak);
-        } else {
-          tempStreak = 1;
-        }
-      } else {
-        tempStreak = 0;
-      }
-
-      prevDate = resultDate;
-    }
-
-    const latestCompleted = [...normalized].reverse().find((result) => result.completed);
-    if (!latestCompleted) {
-      return { currentStreak: 0, longestStreak };
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const latestDate = new Date(latestCompleted.date);
-    latestDate.setHours(0, 0, 0, 0);
-
-    if (Math.abs(diffInDays(today, latestDate)) > 1) {
-      return { currentStreak: 0, longestStreak };
-    }
-
-    let currentStreak = 1;
-    let cursorDate = latestDate;
-
-    for (let i = normalized.length - 2; i >= 0; i--) {
-      const result = normalized[i];
-      if (!result.completed) {
-        break;
-      }
-
-      const resultDate = new Date(result.date);
-      resultDate.setHours(0, 0, 0, 0);
-
-      if (diffInDays(cursorDate, resultDate) === 1) {
-        currentStreak += 1;
-        cursorDate = resultDate;
-      } else {
-        break;
-      }
-    }
-
-    return { currentStreak, longestStreak };
+    return calculateStreaksFromResults(results);
   } catch (error) {
     logger.error("Error calculating streak:", error);
     return { currentStreak: 0, longestStreak: 0 };
@@ -124,8 +45,8 @@ const calculateUserStreak = async (userId) => {
  */
 const getUserActivityHeatmap = async (userId) => {
   try {
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const startDateKey = addCalendarDays(getTodayDateKey(), -364);
+    const oneYearAgo = databaseDateForKey(startDateKey);
 
     // Get all daily results for the user in the last year
     const results = await prisma.dailyResult.findMany({
@@ -176,8 +97,8 @@ const getUserActivityHeatmap = async (userId) => {
  */
 const getUserSubmissionChart = async (userId) => {
   try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoKey = addCalendarDays(getTodayDateKey(), -30);
+    const thirtyDaysAgo = databaseDateForKey(thirtyDaysAgoKey);
 
     // Get all daily results for the last 30 days
     const results = await prisma.dailyResult.findMany({
@@ -231,11 +152,13 @@ const getUserSubmissionChart = async (userId) => {
 
     // Convert to array and fill missing dates
     const chartData = [];
-    const currentDate = new Date(thirtyDaysAgo);
-    const today = new Date();
+    const todayKey = getTodayDateKey();
 
-    while (currentDate <= today) {
-      const dateKey = toLocalDateKey(currentDate);
+    for (
+      let dateKey = thirtyDaysAgoKey;
+      dateKey <= todayKey;
+      dateKey = addCalendarDays(dateKey, 1)
+    ) {
       chartData.push(
         chartMap[dateKey] || {
           date: dateKey,
@@ -244,7 +167,6 @@ const getUserSubmissionChart = async (userId) => {
           failed: 0,
         }
       );
-      currentDate.setDate(currentDate.getDate() + 1);
     }
 
     return chartData;
@@ -262,9 +184,9 @@ const getUserSubmissionChart = async (userId) => {
  */
 const getChallengeSubmissionChart = async (challengeId, days = 30) => {
   try {
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
+    const todayKey = getTodayDateKey();
+    const startDateKey = addCalendarDays(todayKey, -days);
+    const startDate = databaseDateForKey(startDateKey);
 
     const challenge = await prisma.challenge.findUnique({
       where: { id: challengeId },
@@ -291,18 +213,16 @@ const getChallengeSubmissionChart = async (challengeId, days = 30) => {
 
     // Fill in every day in the range, including days with no data
     const chartData = [];
-    const cursor = new Date(startDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    while (cursor <= today) {
-      const dateKey = toLocalDateKey(cursor);
+    for (
+      let dateKey = startDateKey;
+      dateKey <= todayKey;
+      dateKey = addCalendarDays(dateKey, 1)
+    ) {
       chartData.push({
         date: dateKey,
         solved: chartMap[dateKey] || 0,
         target: challenge?.minSubmissionsPerDay || 1,
       });
-      cursor.setDate(cursor.getDate() + 1);
     }
 
     return chartData;

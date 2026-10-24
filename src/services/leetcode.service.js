@@ -296,6 +296,30 @@ const fetchSubmissionsForDate = async (
   return submissionsForDate;
 };
 
+const fetchAcceptedSubmissionsForCalendarDate = async (
+  leetcodeUsername,
+  date,
+  sessionData = null
+) => {
+  const recentSubmissions = await fetchUserSubmissions(
+    leetcodeUsername,
+    sessionData,
+    100
+  );
+
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+  const dayStartSec = Math.floor(dayStart.getTime() / 1000);
+  const dayEndSec = Math.floor(dayEnd.getTime() / 1000);
+
+  return recentSubmissions.filter((submission) => {
+    const timestamp = Number(submission.timestamp);
+    return timestamp >= dayStartSec && timestamp < dayEndSec;
+  });
+};
+
 /**
  * Core function to make GraphQL requests to LeetCode
  * Handles session cookies, CSRF tokens, and error handling
@@ -564,15 +588,44 @@ const fetchUserProfile = async (username, sessionData = null) => {
     }
 
     const calendar = data.matchedUser.userCalendar;
+    const activeYears = calendar.activeYears || [];
+    const historicCalendars = [];
+    const historicYears = activeYears.filter((year) => year !== currentYear);
+
+    for (let offset = 0; offset < historicYears.length; offset += 4) {
+      const yearBatch = historicYears.slice(offset, offset + 4);
+      const calendars = await Promise.all(
+        yearBatch.map(async (year) => {
+          const yearData = await fetchLeetCodeData(
+            USER_CALENDAR_QUERY,
+            { username, year },
+            sessionData
+          );
+          const yearCalendar = yearData?.matchedUser?.userCalendar;
+          if (!yearCalendar) {
+            throw new Error(`Could not retrieve LeetCode calendar for ${year}`);
+          }
+          return yearCalendar.submissionCalendar
+            ? JSON.parse(yearCalendar.submissionCalendar)
+            : {};
+        })
+    );
+    historicCalendars.push(...calendars);
+    }
+
+    const submissionCalendar = calendar.submissionCalendar
+      ? JSON.parse(calendar.submissionCalendar)
+      : {};
+    historicCalendars.forEach((yearCalendar) =>
+      Object.assign(submissionCalendar, yearCalendar)
+    );
 
     return {
       username,
       streak: calendar.streak || 0,
       totalActiveDays: calendar.totalActiveDays || 0,
-      activeYears: calendar.activeYears || [],
-      submissionCalendar: calendar.submissionCalendar
-        ? JSON.parse(calendar.submissionCalendar)
-        : {},
+      activeYears,
+      submissionCalendar,
     };
   } catch (error) {
     logger.error(`Failed to fetch profile for ${username}:`, error.message);
@@ -585,6 +638,7 @@ module.exports = {
   fetchLeetCodeData,
   fetchUserSubmissions,
   fetchSubmissionsForDate,
+  fetchAcceptedSubmissionsForCalendarDate,
   fetchProblemMetadata,
   enrichSubmissionsWithMetadata,
   parseSubmissions,

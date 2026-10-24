@@ -20,6 +20,12 @@ router.get(
   leetcodeController.getUserProfile
 );
 
+router.get(
+  "/submissions/:username",
+  authenticate,
+  leetcodeController.getSubmissionsForDate
+);
+
 router.get("/test/:username", authenticate, leetcodeController.testConnection);
 
 router.get(

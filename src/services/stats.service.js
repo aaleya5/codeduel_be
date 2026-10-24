@@ -1,12 +1,34 @@
 const { prisma } = require("../config/prisma");
 const logger = require("../utils/logger");
 
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+const toLocalDateKey = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+
+  const year = normalized.getFullYear();
+  const month = String(normalized.getMonth() + 1).padStart(2, "0");
+  const day = String(normalized.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const diffInDays = (left, right) => {
+  const startLeft = new Date(left);
+  const startRight = new Date(right);
+  startLeft.setHours(0, 0, 0, 0);
+  startRight.setHours(0, 0, 0, 0);
+
+  return Math.round((startLeft - startRight) / DAY_IN_MS);
+};
+
 /**
  * Calculate user's current and longest streak
  */
 const calculateUserStreak = async (userId) => {
   try {
-    // Get all daily results for user, ordered by date DESC
     const results = await prisma.dailyResult.findMany({
       where: {
         member: {
@@ -14,7 +36,7 @@ const calculateUserStreak = async (userId) => {
         },
       },
       orderBy: {
-        date: "desc",
+        date: "asc",
       },
       select: {
         date: true,
@@ -26,69 +48,24 @@ const calculateUserStreak = async (userId) => {
       return { currentStreak: 0, longestStreak: 0 };
     }
 
-    let currentStreak = 0;
+    const normalized = results
+      .map((result) => ({
+        date: new Date(result.date),
+        completed: Boolean(result.completed),
+      }))
+      .sort((a, b) => a.date - b.date);
+
     let longestStreak = 0;
     let tempStreak = 0;
-
-    // Calculate current streak, walking backwards from the most recently
-    // evaluated day (results is already ordered date DESC).
-    //
-    // Daily results only ever exist for days that have already been
-    // evaluated (the cron evaluates "yesterday", never "today" - see
-    // evaluation.service.js), so the most recent result can legitimately be
-    // dated yesterday even while the streak is still active today. Requiring
-    // a same-day result here (as a naive walk from `new Date()` would) means
-    // the streak would always read as broken.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    if (results.length > 0) {
-      const mostRecentDate = new Date(results[0].date);
-      mostRecentDate.setHours(0, 0, 0, 0);
-      const daysSinceLatestResult = Math.floor(
-        (today - mostRecentDate) / (1000 * 60 * 60 * 24)
-      );
-
-      // The streak is only still "current" if the latest evaluated day is
-      // today or yesterday and it was completed - anything older means the
-      // streak already lapsed (a day went by with no evaluation recorded).
-      if (daysSinceLatestResult <= 1 && results[0].completed) {
-        currentStreak = 1;
-        let expectedDate = mostRecentDate;
-
-        for (let i = 1; i < results.length; i++) {
-          const resultDate = new Date(results[i].date);
-          resultDate.setHours(0, 0, 0, 0);
-          const daysDiff = Math.floor(
-            (expectedDate - resultDate) / (1000 * 60 * 60 * 24)
-          );
-
-          if (daysDiff === 1 && results[i].completed) {
-            currentStreak++;
-            expectedDate = resultDate;
-          } else {
-            break;
-          }
-        }
-      }
-    }
-
-    // Calculate longest streak
-    tempStreak = 0;
     let prevDate = null;
 
-    for (const result of results.sort(
-      (a, b) => new Date(a.date) - new Date(b.date)
-    )) {
+    for (const result of normalized) {
       const resultDate = new Date(result.date);
       resultDate.setHours(0, 0, 0, 0);
 
       if (result.completed) {
-        if (
-          !prevDate ||
-          Math.floor((resultDate - prevDate) / (1000 * 60 * 60 * 24)) === 1
-        ) {
-          tempStreak++;
+        if (!prevDate || diffInDays(resultDate, prevDate) === 1) {
+          tempStreak += 1;
           longestStreak = Math.max(longestStreak, tempStreak);
         } else {
           tempStreak = 1;
@@ -98,6 +75,40 @@ const calculateUserStreak = async (userId) => {
       }
 
       prevDate = resultDate;
+    }
+
+    const latestCompleted = [...normalized].reverse().find((result) => result.completed);
+    if (!latestCompleted) {
+      return { currentStreak: 0, longestStreak };
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const latestDate = new Date(latestCompleted.date);
+    latestDate.setHours(0, 0, 0, 0);
+
+    if (Math.abs(diffInDays(today, latestDate)) > 1) {
+      return { currentStreak: 0, longestStreak };
+    }
+
+    let currentStreak = 1;
+    let cursorDate = latestDate;
+
+    for (let i = normalized.length - 2; i >= 0; i--) {
+      const result = normalized[i];
+      if (!result.completed) {
+        break;
+      }
+
+      const resultDate = new Date(result.date);
+      resultDate.setHours(0, 0, 0, 0);
+
+      if (diffInDays(cursorDate, resultDate) === 1) {
+        currentStreak += 1;
+        cursorDate = resultDate;
+      } else {
+        break;
+      }
     }
 
     return { currentStreak, longestStreak };
@@ -140,7 +151,7 @@ const getUserActivityHeatmap = async (userId) => {
     const activityMap = {};
 
     results.forEach((result) => {
-      const dateKey = result.date.toISOString().split("T")[0];
+      const dateKey = toLocalDateKey(result.date);
       if (!activityMap[dateKey]) {
         activityMap[dateKey] = 0;
       }
@@ -201,7 +212,7 @@ const getUserSubmissionChart = async (userId) => {
     const chartMap = {};
 
     results.forEach((result) => {
-      const dateKey = result.date.toISOString().split("T")[0];
+      const dateKey = toLocalDateKey(result.date);
       if (!chartMap[dateKey]) {
         chartMap[dateKey] = {
           date: dateKey,
@@ -224,7 +235,7 @@ const getUserSubmissionChart = async (userId) => {
     const today = new Date();
 
     while (currentDate <= today) {
-      const dateKey = currentDate.toISOString().split("T")[0];
+      const dateKey = toLocalDateKey(currentDate);
       chartData.push(
         chartMap[dateKey] || {
           date: dateKey,
@@ -274,7 +285,7 @@ const getChallengeSubmissionChart = async (challengeId, days = 30) => {
     // Sum every member's submissions for each calendar day
     const chartMap = {};
     results.forEach((result) => {
-      const dateKey = result.date.toISOString().split("T")[0];
+      const dateKey = toLocalDateKey(result.date);
       chartMap[dateKey] = (chartMap[dateKey] || 0) + (result.submissionsCount || 0);
     });
 
@@ -285,7 +296,7 @@ const getChallengeSubmissionChart = async (challengeId, days = 30) => {
     today.setHours(0, 0, 0, 0);
 
     while (cursor <= today) {
-      const dateKey = cursor.toISOString().split("T")[0];
+      const dateKey = toLocalDateKey(cursor);
       chartData.push({
         date: dateKey,
         solved: chartMap[dateKey] || 0,

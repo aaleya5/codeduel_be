@@ -103,7 +103,21 @@ src/
    npm run prisma:migrate
    ```
 
-5. **Start the server**
+5. **Seed demo data for feature demos**
+
+   ```bash
+   npm run prisma:seed
+   ```
+
+   This creates a small active challenge and 3 demo users with streak and submission history so you can showcase the dashboard, leaderboard, and heatmap without needing to manually create data.
+
+   Demo login credentials:
+
+   - `alexdemo` / `Demo123!`
+   - `sarahdemo` / `Demo123!`
+   - `mikedemo` / `Demo123!`
+
+6. **Start the server**
 
    ```bash
    # Development mode with auto-reload
@@ -129,8 +143,18 @@ The server will start on `http://localhost:3000` (or the port specified in `.env
 - `POST /api/challenges` - Create new challenge (protected)
 - `GET /api/challenges` - Get user's challenges (protected)
 - `GET /api/challenges/:id` - Get challenge details (protected)
-- `POST /api/challenges/:id/join` - Join a challenge (protected)
+- `GET /api/challenges/invite/:inviteCode` - Preview a shareable invitation (protected)
+- `POST /api/challenges/invite/:inviteCode/request` - Request to join from an invitation (protected)
+- `POST /api/challenges/:id/join` - Request to join a challenge (protected)
+- `GET /api/challenges/:id/join-requests` - List pending join requests (owner only)
+- `PATCH /api/challenges/:id/join-requests/:requestId` - Approve or reject a request (owner only; body: `{ "decision": "APPROVED" }` or `{ "decision": "REJECTED" }`)
 - `PATCH /api/challenges/:id/status` - Update challenge status (protected, owner only)
+
+Every challenge has a shareable invite link. Joining is approval-based: the
+owner reviews pending requests from the challenge page, and approval activates
+the member's challenge membership. The create-challenge form includes
+30-day presets for one problem per day and two problems per day; custom rules
+remain available.
 
 ### Dashboard
 
@@ -151,14 +175,18 @@ The server will start on `http://localhost:3000` (or the port specified in `.env
 - LeetCode username mapping
 
 ### Challenge
-
-- Challenge configuration and rules
+- Challenge configuration, invite code, and rules
 - Start/end dates, difficulty filters, penalty amounts
 
 ### ChallengeMember
 
 - User participation in challenges
 - Streak tracking and penalty totals
+
+### ChallengeJoinRequest
+
+- One join request per user and challenge
+- Pending requests can be approved or rejected by the challenge owner
 
 ### DailyResult
 

@@ -22,13 +22,16 @@ model User {
   // Relations
   ownedChallenges   Challenge[]        @relation("ChallengeOwner")
   memberships       ChallengeMember[]
+  joinRequests     ChallengeJoinRequest[]
   leetcodeSessions  LeetCodeSession[]
+  notifications     Notification[]
   
   @@map("users")
 }
 
 model Challenge {
   id                      String             @id @default(uuid())
+  inviteCode              String             @unique @default(cuid())
   name                    String
   description             String?
   ownerId                 String
@@ -50,6 +53,7 @@ model Challenge {
   // Relations
   owner                   User               @relation("ChallengeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members                 ChallengeMember[]
+  joinRequests            ChallengeJoinRequest[]
   dailyResults            DailyResult[]
   
   @@map("challenges")
@@ -66,15 +70,33 @@ model ChallengeMember {
   currentStreak     Int              @default(0)
   longestStreak     Int              @default(0)
   totalPenalties    Float            @default(0)
+  totalPaid         Float            @default(0)
   
   // Relations
   challenge         Challenge        @relation(fields: [challengeId], references: [id], onDelete: Cascade)
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   dailyResults      DailyResult[]
   penaltyLedger     PenaltyLedger[]
+  payments          Payment[]
   
   @@unique([challengeId, userId])
   @@map("challenge_members")
+}
+
+model ChallengeJoinRequest {
+  id          String                       @id @default(uuid())
+  challengeId String
+  userId      String
+  status      ChallengeJoinRequestStatus   @default(PENDING)
+  createdAt   DateTime                     @default(now())
+  updatedAt   DateTime                     @updatedAt
+
+  challenge   Challenge                    @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, userId])
+  @@index([challengeId, status])
+  @@map("challenge_join_requests")
 }
 
 model DailyResult {
@@ -111,13 +133,44 @@ model PenaltyLedger {
   reason            String
   date              DateTime         @db.Date
   createdAt         DateTime         @default(now())
+
+  // Dispute tracking - a member can flag a penalty they believe is wrong
+  // (e.g. an evaluation glitch); the owner reviews and resolves it.
+  disputed          Boolean          @default(false)
+  disputeReason     String?
+  disputeStatus     String           @default("NONE") // NONE | PENDING | RESOLVED_UPHELD | RESOLVED_WAIVED
+  resolutionNote    String?
   
   // Relations
   member            ChallengeMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
   
   @@index([memberId])
   @@index([date])
+  @@index([disputeStatus])
   @@map("penalty_ledger")
+}
+
+model Payment {
+  id                String           @id @default(uuid())
+  memberId          String
+  amount            Float
+  currency          String           @default("INR")
+  status            String           @default("PENDING") // PENDING | PAID | FAILED
+  method            String           @default("RAZORPAY") // RAZORPAY | MANUAL
+  razorpayOrderId   String?          @unique
+  razorpayPaymentId String?
+  razorpaySignature String?
+  recordedBy        String?          // userId of the owner who recorded a MANUAL payment
+  note              String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // Relations
+  member            ChallengeMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([razorpayOrderId])
+  @@map("payments")
 }
 
 model LeetCodeSession {
@@ -160,9 +213,33 @@ model ProblemMetadata {
   @@map("problem_metadata")
 }
 
+model Notification {
+  id                String           @id @default(uuid())
+  userId            String
+  type              String           // "PENALTY_APPLIED" | "PENALTY_ADJUSTED" | "STREAK_BROKEN" | "MEMBER_REMOVED" | "RULES_UPDATED"
+  title             String
+  message           String
+  challengeId       String?
+  isRead            Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+
+  // Relations
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
 enum ChallengeStatus {
   PENDING
   ACTIVE
   COMPLETED
   CANCELLED
+}
+
+enum ChallengeJoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

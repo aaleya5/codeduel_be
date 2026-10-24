@@ -10,6 +10,7 @@ const challengeRoutes = require("./routes/challenge.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 const leetcodeRoutes = require("./routes/leetcode.routes");
 const notificationRoutes = require("./routes/notification.routes");
+const paymentRoutes = require("./routes/payment.routes");
 
 /**
  * Initialize Express application
@@ -50,6 +51,7 @@ const createApp = () => {
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/leetcode", leetcodeRoutes);
   app.use("/api/notifications", notificationRoutes);
+  app.use("/api/payments", paymentRoutes);
 
   // Root endpoint
   app.get("/", (req, res) => {

@@ -150,7 +150,43 @@ const getUserProfile = asyncHandler(async (req, res) => {
 });
 
 /**
- * Test LeetCode connection (for debugging)
+ * Fetch accepted submissions for a specific date
+ * GET /api/leetcode/submissions/:username?date=YYYY-MM-DD
+ */
+const getSubmissionsForDate = asyncHandler(async (req, res) => {
+  const { username } = req.params;
+  const { date } = req.query;
+  const parsedDate =
+    typeof date === "string" ? new Date(`${date}T00:00:00Z`) : null;
+
+  if (
+    typeof date !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !parsedDate ||
+    Number.isNaN(parsedDate.getTime()) ||
+    parsedDate.toISOString().slice(0, 10) !== date
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid date in YYYY-MM-DD format is required",
+    });
+  }
+
+  const sessionData = await leetcodeService.getUserSession(req.user.id);
+  const submissions = await leetcodeService.fetchAcceptedSubmissionsForCalendarDate(
+    username,
+    date,
+    sessionData
+  );
+
+  res.status(200).json({
+    success: true,
+    data: submissions,
+  });
+});
+
+/**
+ * Test LeetCode connection and return a sample of recent accepted submissions
  * GET /api/leetcode/test/:username
  */
 const testConnection = asyncHandler(async (req, res) => {
@@ -160,15 +196,10 @@ const testConnection = asyncHandler(async (req, res) => {
   // Get session if available
   const sessionData = await leetcodeService.getUserSession(userId);
 
-  // Fetch recent submissions
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  const submissions = await leetcodeService.fetchSubmissionsForDate(
+  const submissions = await leetcodeService.fetchUserSubmissions(
     username,
-    yesterday,
-    sessionData
+    sessionData,
+    20
   );
 
   res.status(200).json({
@@ -178,7 +209,7 @@ const testConnection = asyncHandler(async (req, res) => {
       username,
       hasSession: !!sessionData,
       submissionsFound: submissions.length,
-      submissions: submissions// Return first 5 for testing
+      submissions,
     },
   });
 });
@@ -216,6 +247,7 @@ module.exports = {
   getSessionStatus,
   invalidateSession,
   getUserProfile,
+  getSubmissionsForDate,
   testConnection,
   getProblemMetadata,
   validateStoreSession,

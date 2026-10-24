@@ -1,5 +1,6 @@
 const { prisma } = require("../config/prisma");
 const logger = require("../utils/logger");
+const { emitToUser } = require("../config/socket");
 
 /**
  * Create a notification for a user.
@@ -20,9 +21,16 @@ const createNotification = async (
   challengeId = null
 ) => {
   try {
-    return await prisma.notification.create({
+    const notification = await prisma.notification.create({
       data: { userId, type, title, message, challengeId },
     });
+
+    // Push it live to anyone with this user's dashboard open right now.
+    // If they're offline, they'll still see it via GET /api/notifications
+    // on their next visit - this is a nice-to-have, not the source of truth.
+    emitToUser(userId, "notification:new", notification);
+
+    return notification;
   } catch (error) {
     logger.error(
       `Failed to create notification (${type}) for user ${userId}:`,
@@ -65,6 +73,10 @@ const markAsRead = async (notificationId, userId) => {
     data: { isRead: true },
   });
 
+  if (result.count > 0) {
+    emitToUser(userId, "notification:read", { id: notificationId });
+  }
+
   return result.count > 0;
 };
 
@@ -76,6 +88,10 @@ const markAllAsRead = async (userId) => {
     where: { userId, isRead: false },
     data: { isRead: true },
   });
+
+  if (result.count > 0) {
+    emitToUser(userId, "notification:read-all", { count: result.count });
+  }
 
   return result.count;
 };

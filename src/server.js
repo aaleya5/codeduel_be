@@ -2,6 +2,7 @@ const createApp = require("./app");
 const { config, validateConfig } = require("./config/env");
 const { disconnectPrisma } = require("./config/prisma");
 const cronManager = require("./config/cron");
+const { initializeSocket } = require("./config/socket");
 const logger = require("./utils/logger");
 
 /**
@@ -20,6 +21,10 @@ const startServer = async () => {
     const server = app.listen(config.port, () => {
       logger.info(`Server running on port ${config.port} (${config.nodeEnv})`);
     });
+
+    // Attach Socket.IO to the same HTTP server for real-time updates
+    // (live notifications, leaderboard/roster changes). See config/socket.js.
+    initializeSocket(server, config.corsOrigin);
 
     // Initialize cron jobs
     cronManager.initializeCronJobs();

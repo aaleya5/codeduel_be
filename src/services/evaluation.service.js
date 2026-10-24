@@ -2,6 +2,7 @@ const { prisma } = require("../config/prisma");
 const leetcodeService = require("./leetcode.service");
 const penaltyService = require("./penalty.service");
 const notificationService = require("./notification.service");
+const { emitToChallenge, emitBroadcast } = require("../config/socket");
 const logger = require("../utils/logger");
 
 // Safety cap on how many backlog days we'll evaluate for a single member in
@@ -134,6 +135,8 @@ const runDailyEvaluation = async (targetDate = null) => {
 const evaluateChallenge = async (challenge, uptoDate) => {
   logger.info(`Evaluating challenge: ${challenge.name} (${challenge.id})`);
 
+  let anyEvaluated = false;
+
   for (const member of challenge.members) {
     try {
       const datesToEvaluate = await getMissingEvaluationDates(
@@ -152,6 +155,7 @@ const evaluateChallenge = async (challenge, uptoDate) => {
       // correct chronological order.
       for (const date of datesToEvaluate) {
         await evaluateMember(challenge, member, date);
+        anyEvaluated = true;
       }
     } catch (error) {
       logger.error(
@@ -160,6 +164,17 @@ const evaluateChallenge = async (challenge, uptoDate) => {
       );
       // Continue with other members
     }
+  }
+
+  if (anyEvaluated) {
+    // Let anyone currently viewing this challenge's page know its
+    // leaderboard/streaks just changed, so they can refetch instead of
+    // waiting for a manual refresh. Also nudge the global leaderboard,
+    // since this challenge's results feed into it too.
+    emitToChallenge(challenge.id, "challenge:evaluated", {
+      challengeId: challenge.id,
+    });
+    emitBroadcast("leaderboard:global:stale", { challengeId: challenge.id });
   }
 };
 

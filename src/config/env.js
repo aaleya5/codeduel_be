@@ -26,6 +26,10 @@ const config = {
   cronEnabled: process.env.CRON_ENABLED === "true",
   dailyEvaluationTime: process.env.DAILY_EVALUATION_TIME || "0 1 * * *", // 1 AM daily
 
+  // Razorpay Configuration (penalty payments)
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID,
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+
   // CORS Configuration
   corsOrigin: process.env.CORS_ORIGIN || "*",
 };
@@ -42,4 +46,16 @@ const validateConfig = () => {
   }
 };
 
-module.exports = { config, validateConfig };
+// Separate, narrower check for payment routes only - Razorpay keys aren't
+// required for the app to boot (payments are an optional feature), but a
+// request that actually needs them should fail with a clear message rather
+// than a confusing downstream Razorpay SDK error.
+const validateRazorpayConfig = () => {
+  if (!config.razorpayKeyId || !config.razorpayKeySecret) {
+    throw new Error(
+      "Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to enable payments."
+    );
+  }
+};
+
+module.exports = { config, validateConfig, validateRazorpayConfig };

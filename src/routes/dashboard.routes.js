@@ -68,4 +68,31 @@ router.get(
   dashboardController.getSubmissionChart
 );
 
+/**
+ * @route   POST /api/dashboard/evaluate
+ * @desc    Manually trigger evaluation for one challenge you own
+ *          (dev/testing convenience). Body: { "challengeId": "...",
+ *          "date": "YYYY-MM-DD" (optional) }
+ * @access  Private (challenge owner only, enforced in the controller)
+ */
+router.post("/evaluate", authenticate, dashboardController.triggerEvaluation);
+
+/**
+ * @route   GET /api/dashboard/leaderboard
+ * @desc    Get the global leaderboard across all challenges
+ * @access  Private
+ */
+router.get("/leaderboard", authenticate, dashboardController.getGlobalLeaderboard);
+
+/**
+ * @route   GET /api/dashboard/challenge/:challengeId/chart
+ * @desc    Get team submission chart data for a challenge
+ * @access  Private
+ */
+router.get(
+  "/challenge/:challengeId/chart",
+  authenticate,
+  dashboardController.getChallengeChart
+);
+
 module.exports = router;

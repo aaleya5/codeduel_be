@@ -1,4 +1,5 @@
 const challengeService = require("../services/challenge.service");
+const penaltyService = require("../services/penalty.service");
 const { asyncHandler } = require("../middlewares/error.middleware");
 const { body, validationResult } = require("express-validator");
 
@@ -88,12 +89,64 @@ const getChallengeById = asyncHandler(async (req, res) => {
  */
 const joinChallenge = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const membership = await challengeService.joinChallenge(req.user.id, id);
+  const joinRequest = await challengeService.joinChallenge(req.user.id, id);
+
+  res.status(202).json({
+    success: true,
+    message: "Join request submitted",
+    data: joinRequest,
+  });
+});
+
+const getInviteDetails = asyncHandler(async (req, res) => {
+  const challenge = await challengeService.getInviteDetails(
+    req.user.id,
+    req.params.inviteCode
+  );
 
   res.status(200).json({
     success: true,
-    message: "Successfully joined the challenge",
-    data: membership,
+    data: challenge,
+  });
+});
+
+const requestToJoinByInvite = asyncHandler(async (req, res) => {
+  const joinRequest = await challengeService.requestToJoinByInvite(
+    req.user.id,
+    req.params.inviteCode
+  );
+
+  res.status(202).json({
+    success: true,
+    message: "Join request submitted",
+    data: joinRequest,
+  });
+});
+
+const getJoinRequests = asyncHandler(async (req, res) => {
+  const joinRequests = await challengeService.getJoinRequests(
+    req.user.id,
+    req.params.id
+  );
+
+  res.status(200).json({
+    success: true,
+    data: joinRequests,
+  });
+});
+
+const resolveJoinRequest = asyncHandler(async (req, res) => {
+  const joinRequest = await challengeService.resolveJoinRequest(
+    req.user.id,
+    req.params.id,
+    req.params.requestId,
+    req.body.decision
+  );
+
+  res.status(200).json({
+    success: true,
+    message: `Join request ${req.body.decision.toLowerCase()}`,
+    data: joinRequest,
   });
 });
 
@@ -143,11 +196,134 @@ const updateChallengeStatus = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Update challenge rules (owner only)
+ * PATCH /api/challenges/:id
+ */
+const updateChallengeRules = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const challenge = await challengeService.updateChallengeRules(
+    id,
+    req.user.id,
+    req.body
+  );
+
+  res.status(200).json({
+    success: true,
+    message: "Challenge updated successfully",
+    data: challenge,
+  });
+});
+
+/**
+ * Remove a member from a challenge (owner only)
+ * DELETE /api/challenges/:id/members/:memberId
+ */
+const removeMember = asyncHandler(async (req, res) => {
+  const { id, memberId } = req.params;
+
+  await challengeService.removeMember(id, req.user.id, memberId);
+
+  res.status(200).json({
+    success: true,
+    message: "Member removed successfully",
+  });
+});
+
+/**
+ * Adjust a member's penalty balance (owner only)
+ * POST /api/challenges/:id/members/:memberId/penalty-adjustment
+ */
+const adjustMemberPenalty = asyncHandler(async (req, res) => {
+  const { id, memberId } = req.params;
+  const { amount, reason } = req.body;
+
+  const penalty = await challengeService.adjustMemberPenalty(
+    id,
+    req.user.id,
+    memberId,
+    amount,
+    reason
+  );
+
+  res.status(200).json({
+    success: true,
+    message: "Penalty adjusted successfully",
+    data: penalty,
+  });
+});
+
+/**
+ * Dispute one of your own penalties
+ * POST /api/challenges/:id/penalties/:penaltyId/dispute
+ * Body: { reason }
+ */
+const disputePenalty = asyncHandler(async (req, res) => {
+  const { penaltyId } = req.params;
+  const { reason } = req.body;
+
+  const penalty = await penaltyService.disputePenalty(req.user.id, penaltyId, reason);
+
+  res.status(200).json({
+    success: true,
+    message: "Dispute submitted",
+    data: penalty,
+  });
+});
+
+/**
+ * List a challenge's pending disputes (owner only)
+ * GET /api/challenges/:id/disputes
+ */
+const getDisputes = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const disputes = await penaltyService.getDisputesForChallenge(req.user.id, id);
+
+  res.status(200).json({
+    success: true,
+    data: disputes,
+  });
+});
+
+/**
+ * Resolve a pending dispute (owner only)
+ * POST /api/challenges/:id/penalties/:penaltyId/resolve
+ * Body: { action: "UPHOLD" | "WAIVE", note }
+ */
+const resolveDispute = asyncHandler(async (req, res) => {
+  const { penaltyId } = req.params;
+  const { action, note } = req.body;
+
+  const resolved = await penaltyService.resolveDispute(
+    req.user.id,
+    penaltyId,
+    action,
+    note
+  );
+
+  res.status(200).json({
+    success: true,
+    message: "Dispute resolved",
+    data: resolved,
+  });
+});
+
 module.exports = {
   createChallenge,
   getChallengeById,
   joinChallenge,
+  getInviteDetails,
+  requestToJoinByInvite,
+  getJoinRequests,
+  resolveJoinRequest,
   getUserChallenges,
   updateChallengeStatus,
+  updateChallengeRules,
+  removeMember,
+  adjustMemberPenalty,
+  disputePenalty,
+  getDisputes,
+  resolveDispute,
   validateCreateChallenge,
 };

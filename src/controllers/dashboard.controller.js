@@ -200,11 +200,14 @@ const getChallengeLeaderboard = asyncHandler(async (req, res) => {
         totalDays > 0 ? (completedDays / totalDays) * 100 : 0;
 
       return {
+        memberId: member.id,
+        userId: member.userId,
         username: member.user.username,
         leetcodeUsername: member.user.leetcodeUsername,
         currentStreak: member.currentStreak,
         longestStreak: member.longestStreak,
         totalPenalties: member.totalPenalties,
+        totalPaid: member.totalPaid,
         completedDays,
         totalDays,
         completionRate: completionRate.toFixed(2),
@@ -327,6 +330,89 @@ const getSubmissionChart = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Manually trigger the daily evaluation job for a challenge you own
+ * POST /api/dashboard/evaluate
+ *
+ * Dev/testing convenience so the evaluation logic can be exercised without
+ * waiting for the cron schedule. Requires `challengeId` in the body and
+ * scopes the evaluation to that one challenge - the caller must own it.
+ * Optionally accepts `date` (YYYY-MM-DD) to evaluate a specific day instead
+ * of "yesterday".
+ */
+const triggerEvaluation = asyncHandler(async (req, res) => {
+  const { challengeId, date } = req.body || {};
+
+  if (!challengeId) {
+    return res.status(400).json({
+      success: false,
+      message: "challengeId is required",
+    });
+  }
+
+  const challenge = await prisma.challenge.findUnique({
+    where: { id: challengeId },
+    select: { ownerId: true },
+  });
+
+  if (!challenge) {
+    return res.status(404).json({
+      success: false,
+      message: "Challenge not found",
+    });
+  }
+
+  if (challenge.ownerId !== req.user.id) {
+    return res.status(403).json({
+      success: false,
+      message: "Only the challenge owner can trigger its evaluation",
+    });
+  }
+
+  const targetDate = date ? new Date(date) : null;
+
+  if (date && isNaN(targetDate?.getTime())) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid date format. Use YYYY-MM-DD.",
+    });
+  }
+
+  await evaluationService.runEvaluationForChallenge(challengeId, targetDate);
+
+  res.status(200).json({
+    success: true,
+    message: `Evaluation triggered${date ? ` for ${date}` : " for yesterday"}`,
+  });
+});
+
+/**
+ * Get the global leaderboard across all challenges
+ * GET /api/dashboard/leaderboard
+ */
+const getGlobalLeaderboard = asyncHandler(async (req, res) => {
+  const leaderboard = await statsService.getGlobalLeaderboard();
+
+  res.status(200).json({
+    success: true,
+    data: leaderboard,
+  });
+});
+
+/**
+ * Get submission chart data for a single challenge (all members combined)
+ * GET /api/dashboard/challenge/:challengeId/chart
+ */
+const getChallengeChart = asyncHandler(async (req, res) => {
+  const { challengeId } = req.params;
+  const chartData = await statsService.getChallengeSubmissionChart(challengeId);
+
+  res.status(200).json({
+    success: true,
+    data: chartData,
+  });
+});
+
 module.exports = {
   getDashboard,
   getChallengeProgress,
@@ -335,4 +421,7 @@ module.exports = {
   getActivityHeatmap,
   getStats,
   getSubmissionChart,
+  triggerEvaluation,
+  getGlobalLeaderboard,
+  getChallengeChart,
 };

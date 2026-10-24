@@ -1,6 +1,5 @@
 const { prisma } = require("../config/prisma");
 const leetcodeService = require("./leetcode.service");
-const penaltyService = require("./penalty.service");
 const notificationService = require("./notification.service");
 const { emitToChallenge, emitBroadcast } = require("../config/socket");
 const logger = require("../utils/logger");
@@ -167,8 +166,11 @@ const evaluateChallenge = async (challenge, uptoDate) => {
       // Evaluate oldest-first so streak increments/resets build up in the
       // correct chronological order.
       for (const date of datesToEvaluate) {
-        await evaluateMember(challenge, member, date);
-        anyEvaluated = true;
+        const result = await evaluateMember(challenge, member, date);
+        anyEvaluated = anyEvaluated || result.evaluated;
+        if (result.retryable) {
+          break;
+        }
       }
     } catch (error) {
       logger.error(
@@ -245,73 +247,57 @@ const evaluateMember = async (challenge, member, evaluationDate) => {
   // Check if user has LeetCode username
   if (!user.leetcodeUsername) {
     logger.warn(`User ${user.username} doesn't have a LeetCode username set`);
-
-    // Create a failed result
-    await createDailyResult(
+    return persistEvaluationResult(
       challenge.id,
-      member.id,
+      challenge,
+      member,
       evaluationDate,
       false,
       0,
       [],
-      {
-        reason: "No LeetCode username configured",
-      }
-    );
-
-    // Apply penalty
-    await applyPenaltyForFailure(
-      challenge,
-      member,
-      evaluationDate,
+      { reason: "No LeetCode username configured" },
       "No LeetCode username configured"
     );
-    return;
   }
 
-  // Fetch LeetCode session (if stored)
-  const sessionData = await leetcodeService.getUserSession(user.id);
-
-  // Fetch submissions for the date
+  let sessionData;
   let submissions;
+  let enrichedSubmissions;
   try {
+    sessionData = await leetcodeService.getUserSession(user.id);
     submissions = await leetcodeService.fetchSubmissionsForDate(
       user.leetcodeUsername,
       evaluationDate,
       sessionData
     );
+    enrichedSubmissions =
+      await leetcodeService.enrichSubmissionsWithMetadata(
+        submissions,
+        sessionData
+      );
   } catch (error) {
     logger.error(
-      `Failed to fetch submissions for ${user.leetcodeUsername}:`,
+      `LeetCode evaluation could not be verified for ${user.leetcodeUsername}:`,
       error
     );
-
-    // Create a failed result due to API error
-    await createDailyResult(
-      challenge.id,
-      member.id,
-      evaluationDate,
-      false,
-      0,
-      [],
-      {
-        reason: "Failed to fetch submissions from LeetCode",
-        error: error.message,
-      }
-    );
-
-    // Don't apply penalty for API errors
-    return;
+    return { evaluated: false, retryable: true };
   }
 
-  // Enrich submissions with metadata (difficulty, etc.)
-  const enrichedSubmissions =
-    await leetcodeService.enrichSubmissionsWithMetadata(
-      submissions,
-      sessionData
+  // Missing metadata makes difficulty-filtered counts unverifiable; do not
+  // interpret it as a completed miss and assess a penalty.
+  if (
+    challenge.difficultyFilter?.length > 0 &&
+    enrichedSubmissions.some(
+      (submission) =>
+        !["Easy", "Medium", "Hard"].includes(submission.difficulty)
+    )
+  ) {
+    logger.error(
+      `Cannot verify difficulty metadata for ${user.leetcodeUsername}; evaluation will be retried`
     );
+    return { evaluated: false, retryable: true };
+  }
 
-  // Filter by difficulty if specified
   let filteredSubmissions = enrichedSubmissions;
   if (challenge.difficultyFilter && challenge.difficultyFilter.length > 0) {
     filteredSubmissions = enrichedSubmissions.filter((sub) =>
@@ -325,143 +311,158 @@ const evaluateMember = async (challenge, member, evaluationDate) => {
     );
   }
 
-  // Extract unique problems if constraint is enabled
   const problemsSolved = challenge.uniqueProblemConstraint
     ? [...new Set(filteredSubmissions.map((s) => s.titleSlug))]
     : filteredSubmissions.map((s) => s.titleSlug);
-
   const submissionsCount = problemsSolved.length;
-
-  // Check if member met the requirement
   const completed = submissionsCount >= challenge.minSubmissionsPerDay;
-
-  // Create daily result
-  await createDailyResult(
+  const metadata = {
+    submissions: filteredSubmissions.map((submission) => ({
+      title: submission.title,
+      titleSlug: submission.titleSlug,
+      difficulty: submission.difficulty,
+      timestamp: submission.timestamp,
+      language: submission.language,
+    })),
+  };
+  const failureReason = completed
+    ? null
+    : `Failed to meet daily requirement: ${submissionsCount}/${challenge.minSubmissionsPerDay} submissions`;
+  const result = await persistEvaluationResult(
     challenge.id,
-    member.id,
+    challenge,
+    member,
     evaluationDate,
     completed,
     submissionsCount,
     problemsSolved,
-    {
-      submissions: filteredSubmissions.map((s) => ({
-        title: s.title,
-        titleSlug: s.titleSlug,
-        difficulty: s.difficulty,
-        timestamp: s.timestamp,
-        language: s.language,
-      })),
-    }
+    metadata,
+    failureReason
   );
-
-  // Update streak
-  const streakResult = await updateStreak(member.id, completed);
-
-  // Apply penalty if failed
-  if (!completed) {
-    await applyPenaltyForFailure(
-      challenge,
-      member,
-      evaluationDate,
-      `Failed to meet daily requirement: ${submissionsCount}/${challenge.minSubmissionsPerDay} submissions`
-    );
-
-    // Notify the member if a real streak just broke (don't bother them for
-    // a "streak" that was already 0)
-    if (streakResult.previousStreak > 0) {
-      await notificationService.createNotification(
-        user.id,
-        "STREAK_BROKEN",
-        "Streak broken",
-        `Your ${streakResult.previousStreak}-day streak in "${challenge.name}" ended - only ${submissionsCount}/${challenge.minSubmissionsPerDay} problems solved.`,
-        challenge.id
-      );
-    }
-  }
 
   logger.info(
     `Member ${user.username} evaluation: ${
       completed ? "PASSED" : "FAILED"
     } (${submissionsCount}/${challenge.minSubmissionsPerDay})`
   );
+  return result;
 };
 
 /**
- * Create a daily result record
+ * Persist an evaluation and all derived accounting changes atomically.
  */
-const createDailyResult = async (
+const persistEvaluationResult = async (
   challengeId,
-  memberId,
+  challenge,
+  member,
   date,
   completed,
   submissionsCount,
   problemsSolved,
-  metadata = {}
+  metadata = {},
+  failureReason = null
 ) => {
-  return await prisma.dailyResult.create({
-    data: {
-      challengeId,
-      memberId,
-      date,
-      completed,
-      submissionsCount,
-      problemsSolved,
-      evaluatedAt: new Date(),
-      metadata,
-    },
-  });
-};
+  let persisted;
+  try {
+    persisted = await prisma.$transaction(
+      async (transaction) => {
+        await transaction.dailyResult.create({
+          data: {
+            challengeId,
+            memberId: member.id,
+            date,
+            completed,
+            submissionsCount,
+            problemsSolved,
+            evaluatedAt: new Date(),
+            metadata,
+          },
+        });
 
-/**
- * Update member's streak based on completion status
- * @returns {{previousStreak: number, newStreak: number}}
- */
-const updateStreak = async (memberId, completed) => {
-  const member = await prisma.challengeMember.findUnique({
-    where: { id: memberId },
-  });
+        const currentMember = await transaction.challengeMember.findUnique({
+          where: { id: member.id },
+          select: {
+            currentStreak: true,
+            longestStreak: true,
+          },
+        });
+        if (!currentMember) {
+          throw new Error(`Challenge member ${member.id} no longer exists`);
+        }
 
-  const previousStreak = member.currentStreak;
+        const previousStreak = currentMember.currentStreak;
+        const currentStreak = completed ? previousStreak + 1 : 0;
+        const longestStreak = Math.max(
+          currentStreak,
+          currentMember.longestStreak
+        );
+        const shouldApplyPenalty =
+          !completed && failureReason && challenge.penaltyAmount > 0;
 
-  if (completed) {
-    // Increment current streak
-    const newStreak = member.currentStreak + 1;
-    const newLongest = Math.max(newStreak, member.longestStreak);
+        await transaction.challengeMember.update({
+          where: { id: member.id },
+          data: {
+            currentStreak,
+            longestStreak,
+            ...(shouldApplyPenalty
+              ? { totalPenalties: { increment: challenge.penaltyAmount } }
+              : {}),
+          },
+        });
 
-    await prisma.challengeMember.update({
-      where: { id: memberId },
-      data: {
-        currentStreak: newStreak,
-        longestStreak: newLongest,
+        if (shouldApplyPenalty) {
+          await transaction.penaltyLedger.create({
+            data: {
+              memberId: member.id,
+              amount: challenge.penaltyAmount,
+              reason: failureReason,
+              date,
+            },
+          });
+        }
+
+        return { previousStreak, currentStreak, shouldApplyPenalty };
       },
-    });
-
-    return { previousStreak, newStreak };
+      { isolationLevel: "Serializable" }
+    );
+  } catch (error) {
+    if (error.code === "P2002") {
+      logger.info(
+        `Evaluation already recorded for challenge ${challengeId}, member ${member.id}, date ${date.toISOString().slice(0, 10)}`
+      );
+      return { evaluated: false, duplicate: true };
+    }
+    throw error;
   }
 
-  // Reset current streak
-  await prisma.challengeMember.update({
-    where: { id: memberId },
-    data: {
-      currentStreak: 0,
-    },
-  });
+  try {
+    if (persisted.shouldApplyPenalty) {
+      await notificationService.createNotification(
+        member.user.id,
+        "PENALTY_APPLIED",
+        "Penalty applied",
+        `A penalty of Rs. ${challenge.penaltyAmount} was applied in "${challenge.name}".`,
+        challenge.id
+      );
+    }
 
-  return { previousStreak, newStreak: 0 };
-};
-
-/**
- * Apply penalty for failing daily requirement
- */
-const applyPenaltyForFailure = async (challenge, member, date, reason) => {
-  if (challenge.penaltyAmount > 0) {
-    await penaltyService.applyPenalty(
-      member.id,
-      challenge.penaltyAmount,
-      reason,
-      date
+    if (!completed && persisted.previousStreak > 0) {
+      await notificationService.createNotification(
+        member.user.id,
+        "STREAK_BROKEN",
+        "Streak broken",
+        `Your ${persisted.previousStreak}-day streak in "${challenge.name}" ended.`,
+        challenge.id
+      );
+    }
+  } catch (error) {
+    logger.error(
+      `Evaluation was persisted but notification delivery failed for member ${member.id}:`,
+      error
     );
   }
+
+  return { evaluated: true, ...persisted };
 };
 
 /**

@@ -142,12 +142,33 @@ const fetchUserSubmissions = async (
       { headers, timeout: 10000 }
     );
 
-    if (!response.data || !response.data.data) {
-      logger.warn(`No data returned for user: ${leetcodeUsername}`);
-      return [];
+    if (
+      !response.data ||
+      response.data.errors?.length ||
+      !Array.isArray(response.data.data?.recentAcSubmissionList)
+    ) {
+      logger.warn(
+        `LeetCode returned an incomplete submissions response for ${leetcodeUsername}`
+      );
+      throw new Error("LeetCode returned an incomplete submissions response");
     }
 
-    const submissions = response.data.data.recentAcSubmissionList || [];
+    const submissions = response.data.data.recentAcSubmissionList;
+    const hasInvalidSubmission = submissions.some(
+      (submission) =>
+        !submission ||
+        typeof submission.titleSlug !== "string" ||
+        !submission.titleSlug ||
+        typeof submission.timestamp !== "string" ||
+        !/^\d+$/.test(submission.timestamp) ||
+        submission.statusDisplay !== "Accepted"
+    );
+    if (hasInvalidSubmission) {
+      logger.warn(
+        `LeetCode returned invalid accepted-submission data for ${leetcodeUsername}`
+      );
+      throw new Error("LeetCode returned invalid accepted-submission data");
+    }
 
     logger.debug(
       `Fetched ${submissions.length} submissions for ${leetcodeUsername}`
@@ -415,9 +436,10 @@ const fetchLeetCodeData = async (query, variables, sessionData = null) => {
  * @returns {Promise<Object>} Problem metadata including difficulty
  */
 const fetchProblemMetadata = async (titleSlug, sessionData = null) => {
+  let cachedProblem = null;
   try {
     // Check cache first (if data is less than 7 days old)
-    const cachedProblem = await prisma.problemMetadata.findUnique({
+    cachedProblem = await prisma.problemMetadata.findUnique({
       where: { titleSlug },
     });
 

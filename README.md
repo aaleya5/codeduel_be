@@ -146,6 +146,16 @@ so an unauthenticated/invalid callback cannot release its reservation. Pending
 orders still need provider-webhook reconciliation or a verified expiry process
 before their reservations can be released automatically.
 
+Daily evaluations persist the result, streak update, and any penalty ledger
+entry in one transaction. A duplicate run for the same member/challenge/day
+does not apply the penalty again. If a LeetCode submission fetch fails, the day
+is left unevaluated and can be retried on a later run. Session/database errors,
+malformed provider responses, and missing difficulty metadata for a
+difficulty-filtered challenge also remain unverified and do not cause
+penalties. A valid empty accepted-submission response is treated as zero
+submissions. A member without a LeetCode username is still recorded as
+incomplete under the current policy.
+
 ### Automated tests
 
 Run `npm test` from `codeduel_be`. Tests use Node's built-in test runner and

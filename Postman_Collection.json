@@ -1,9 +1,9 @@
 {
   "info": {
     "name": "LeetCode Daily Challenge Tracker API",
-    "description": "Complete API collection for testing the LeetCode Daily Challenge Tracker backend\n\n⚠️ TESTING FLOW:\n1. Start with Health Check endpoints (no auth required)\n2. Register a new user or Login (token auto-saves)\n3. All other endpoints require the JWT token from step 2\n4. Store LeetCode session before testing challenge evaluations\n5. Create and join challenges\n6. View dashboard and progress\n\n🔑 The JWT token is automatically saved to {{jwt_token}} variable after login/register",
+    "description": "API collection for the LeetCode Daily Challenge Tracker backend, including challenge invitations and approvals, activity/statistics, LeetCode submissions, notifications, payments, and dispute workflows.\n\nTESTING FLOW:\n1. Check the health endpoint, then register or login (JWT auto-saves).\n2. Store a LeetCode session before calling profile/calendar endpoints.\n3. Create a challenge to save challenge_id and invite_code.\n4. Use a second account to create a join request; review it using the owner's token.\n5. Payment order and verification requests require valid Razorpay credentials.\n\nThe JWT token is automatically saved to {{jwt_token}} after login/register.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "auth": {
     "type": "bearer",
@@ -33,6 +33,36 @@
     },
     {
       "key": "challenge_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invite_code",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "join_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "member_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "penalty_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notification_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "leetcode_username",
       "value": "",
       "type": "string"
     }
@@ -234,7 +264,9 @@
                   "if (pm.response.code === 201) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('challenge_id', response.data.id);",
+                  "    pm.collectionVariables.set('invite_code', response.data.inviteCode);",
                   "    console.log('✅ Challenge ID saved:', response.data.id);",
+                  "    console.log('✅ Invite code saved:', response.data.inviteCode);",
                   "}"
                 ]
               }
@@ -260,7 +292,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"January 2026 Daily Challenge\",\n  \"description\": \"Solve at least 1 Medium or Hard problem daily\",\n  \"minSubmissionsPerDay\": 1,\n  \"difficultyFilter\": [\"Medium\", \"Hard\"],\n  \"uniqueProblemConstraint\": true,\n  \"penaltyAmount\": 100,\n  \"startDate\": \"2026-01-07T00:00:00.000Z\",\n  \"endDate\": \"2026-01-31T23:59:59.999Z\"\n}"
+              "raw": "{\n  \"name\": \"January 2027 Daily Challenge\",\n  \"description\": \"Solve at least 1 Medium or Hard problem daily\",\n  \"minSubmissionsPerDay\": 1,\n  \"difficultyFilter\": [\"Medium\", \"Hard\"],\n  \"uniqueProblemConstraint\": true,\n  \"penaltyAmount\": 100,\n  \"startDate\": \"2027-01-07T00:00:00.000Z\",\n  \"endDate\": \"2027-01-31T23:59:59.999Z\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/challenges",
@@ -375,7 +407,7 @@
           "response": []
         },
         {
-          "name": "Join Challenge",
+          "name": "Request to Join Challenge",
           "request": {
             "auth": {
               "type": "bearer",
@@ -591,7 +623,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"cookie\": \"LEETCODE_SESSION=your_leetcode_session_cookie_here\",\n  \"csrfToken\": \"your_csrf_token_here\",\n  \"expiresAt\": \"2026-02-06T00:00:00.000Z\"\n}"
+              "raw": "{\n  \"cookie\": \"LEETCODE_SESSION=your_leetcode_session_cookie_here\",\n  \"csrfToken\": \"your_csrf_token_here\",\n  \"expiresAt\": \"2027-02-06T00:00:00.000Z\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/leetcode/session",
@@ -663,15 +695,15 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/leetcode/profile/krishnapaljadeja",
+              "raw": "{{base_url}}/api/leetcode/profile/{{leetcode_username}}",
               "host": ["{{base_url}}"],
-              "path": ["api", "leetcode", "profile", "krishnapaljadeja"]
+              "path": ["api", "leetcode", "profile", "{{leetcode_username}}"]
             }
           },
           "response": []
         },
         {
-          "name": "Test LeetCode Connection",
+          "name": "Test Connection and Get Recent Accepted Submissions",
           "request": {
             "auth": {
               "type": "bearer",
@@ -686,9 +718,9 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/leetcode/test/krishnapaljadeja",
+              "raw": "{{base_url}}/api/leetcode/test/{{leetcode_username}}",
               "host": ["{{base_url}}"],
-              "path": ["api", "leetcode", "test", "krishnapaljadeja"]
+              "path": ["api", "leetcode", "test", "{{leetcode_username}}"]
             }
           },
           "response": []
@@ -738,6 +770,273 @@
             }
           },
           "response": []
+        }
+      ]
+    },
+    {
+      "name": "🆕 Current API Endpoints",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{jwt_token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Challenge Invitations and Requests",
+          "item": [
+            {
+              "name": "Preview Invitation",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/challenges/invite/{{invite_code}}" }
+              },
+              "response": []
+            },
+            {
+              "name": "Request to Join from Invitation",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/challenges/invite/{{invite_code}}/request" }
+              },
+              "response": []
+            },
+            {
+              "name": "List Pending Join Requests (Owner)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  const requests = pm.response.json().data || [];",
+                      "  if (requests.length) pm.collectionVariables.set('join_request_id', requests[0].id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/join-requests" }
+              },
+              "response": []
+            },
+            {
+              "name": "Approve Join Request (Owner)",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"decision\": \"APPROVED\"\n}" },
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/join-requests/{{join_request_id}}" }
+              },
+              "response": []
+            },
+            {
+              "name": "Reject Join Request (Owner)",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"decision\": \"REJECTED\"\n}" },
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/join-requests/{{join_request_id}}" }
+              },
+              "response": []
+            },
+            {
+              "name": "Update Challenge Rules (Owner)",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"Updated challenge name\",\n  \"minSubmissionsPerDay\": 2,\n  \"endDate\": \"2027-12-31T23:59:59.999Z\"\n}" },
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}" }
+              },
+              "response": []
+            },
+            {
+              "name": "Remove Challenge Member (Owner)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/members/{{member_id}}" }
+              },
+              "response": []
+            },
+            {
+              "name": "Adjust Member Penalty (Owner)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"amount\": 5,\n  \"reason\": \"Manual adjustment for testing\"\n}" },
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/members/{{member_id}}/penalty-adjustment" }
+              },
+              "response": []
+            },
+            {
+              "name": "List Pending Penalty Disputes (Owner)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/disputes" }
+              },
+              "response": []
+            },
+            {
+              "name": "Dispute Penalty",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"reason\": \"I completed the requirement for this day\"\n}" },
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/penalties/{{penalty_id}}/dispute" }
+              },
+              "response": []
+            },
+            {
+              "name": "Resolve Penalty Dispute (Owner)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"action\": \"WAIVE\",\n  \"note\": \"Dispute accepted\"\n}" },
+                "url": { "raw": "{{base_url}}/api/challenges/{{challenge_id}}/penalties/{{penalty_id}}/resolve" }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Dashboard Activity and Statistics",
+          "item": [
+            {
+              "name": "Get Activity Heatmap",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/activity-heatmap" } },
+              "response": []
+            },
+            {
+              "name": "Get User Statistics",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/stats" } },
+              "response": []
+            },
+            {
+              "name": "Get User Submission Chart",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/submission-chart" } },
+              "response": []
+            },
+            {
+              "name": "Get Global Leaderboard",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/leaderboard" } },
+              "response": []
+            },
+            {
+              "name": "Get Challenge Submission Chart",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/challenge/{{challenge_id}}/chart" } },
+              "response": []
+            },
+            {
+              "name": "Manually Evaluate Challenge (Owner)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"challengeId\": \"{{challenge_id}}\",\n  \"date\": \"2026-10-23\"\n}" },
+                "url": { "raw": "{{base_url}}/api/dashboard/evaluate" }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "LeetCode Calendar Submissions",
+          "item": [
+            {
+              "name": "Get Accepted Submissions for a Date",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/leetcode/submissions/{{leetcode_username}}?date=2026-10-23" }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Notifications",
+          "item": [
+            {
+              "name": "Get Notifications",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/notifications" } },
+              "response": []
+            },
+            {
+              "name": "Get Unread Notifications",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/notifications?unreadOnly=true" } },
+              "response": []
+            },
+            {
+              "name": "Get Unread Notification Count",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/notifications/unread-count" } },
+              "response": []
+            },
+            {
+              "name": "Mark All Notifications Read",
+              "request": { "method": "PATCH", "header": [], "url": { "raw": "{{base_url}}/api/notifications/read-all" } },
+              "response": []
+            },
+            {
+              "name": "Mark Notification Read",
+              "request": { "method": "PATCH", "header": [], "url": { "raw": "{{base_url}}/api/notifications/{{notification_id}}/read" } },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Payments and Ledger",
+          "item": [
+            {
+              "name": "Create Razorpay Payment Order",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"memberId\": \"{{member_id}}\",\n  \"amount\": 100\n}" },
+                "url": { "raw": "{{base_url}}/api/payments/create-order" }
+              },
+              "response": []
+            },
+            {
+              "name": "Verify Razorpay Payment",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"razorpay_order_id\": \"order_id_from_checkout\",\n  \"razorpay_payment_id\": \"payment_id_from_checkout\",\n  \"razorpay_signature\": \"signature_from_checkout\"\n}" },
+                "url": { "raw": "{{base_url}}/api/payments/verify" }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Payment History",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/payments/history/{{member_id}}" } },
+              "response": []
+            },
+            {
+              "name": "Record Offline Payment (Owner)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"challengeId\": \"{{challenge_id}}\",\n  \"memberId\": \"{{member_id}}\",\n  \"amount\": 50,\n  \"note\": \"Offline payment received\"\n}" },
+                "url": { "raw": "{{base_url}}/api/payments/manual" }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Full Penalty and Payment Ledger",
+              "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/payments/ledger/{{member_id}}" } },
+              "response": []
+            }
+          ]
         }
       ]
     }

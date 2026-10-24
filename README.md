@@ -131,6 +131,8 @@ The server will start on `http://localhost:3000` (or the port specified in `.env
 
 ## 📡 API Endpoints
 
+Unless noted otherwise, endpoints require `Authorization: Bearer <token>`.
+
 ### Authentication
 
 - `POST /api/auth/register` - Register new user
@@ -141,18 +143,24 @@ The server will start on `http://localhost:3000` (or the port specified in `.env
 ### Challenges
 
 - `POST /api/challenges` - Create new challenge (protected)
-- `GET /api/challenges` - Get user's challenges (protected)
-- `GET /api/challenges/:id` - Get challenge details (protected)
+- `GET /api/challenges?status=ACTIVE&owned=true` - List the current user's challenges; both query filters are optional (protected)
 - `GET /api/challenges/invite/:inviteCode` - Preview a shareable invitation (protected)
 - `POST /api/challenges/invite/:inviteCode/request` - Request to join from an invitation (protected)
-- `POST /api/challenges/:id/join` - Request to join a challenge (protected)
+- `GET /api/challenges/:id` - Get challenge details (protected)
+- `POST /api/challenges/:id/join` - Request to join a challenge by ID (protected)
 - `GET /api/challenges/:id/join-requests` - List pending join requests (owner only)
 - `PATCH /api/challenges/:id/join-requests/:requestId` - Approve or reject a request (owner only; body: `{ "decision": "APPROVED" }` or `{ "decision": "REJECTED" }`)
-- `PATCH /api/challenges/:id/status` - Update challenge status (protected, owner only)
+- `PATCH /api/challenges/:id/status` - Update challenge status (owner only)
+- `PATCH /api/challenges/:id` - Update challenge rules (owner only)
+- `DELETE /api/challenges/:id/members/:memberId` - Remove a member (owner only)
+- `POST /api/challenges/:id/members/:memberId/penalty-adjustment` - Adjust a member's penalty (owner only; body: `{ "amount": 5, "reason": "..." }`)
+- `GET /api/challenges/:id/disputes` - List pending penalty disputes (owner only)
+- `POST /api/challenges/:id/penalties/:penaltyId/dispute` - Dispute your penalty (body: `{ "reason": "..." }`)
+- `POST /api/challenges/:id/penalties/:penaltyId/resolve` - Resolve a dispute (owner only; body: `{ "action": "UPHOLD" }` or `{ "action": "WAIVE", "note": "..." }`)
 
 Every challenge has a shareable invite link. Joining is approval-based: the
 owner reviews pending requests from the challenge page, and approval activates
-the member's challenge membership. The create-challenge form includes
+the member's challenge membership. The frontend create-challenge form includes
 30-day presets for one problem per day and two problems per day; custom rules
 remain available.
 
@@ -162,9 +170,41 @@ remain available.
 - `GET /api/dashboard/today` - Get today's status (protected)
 - `GET /api/dashboard/challenge/:id` - Get detailed challenge progress (protected)
 - `GET /api/dashboard/challenge/:id/leaderboard` - Get challenge leaderboard (protected)
+- `GET /api/dashboard/challenge/:id/chart` - Get challenge submission chart (protected)
+- `GET /api/dashboard/activity-heatmap` - Get the current user's activity heatmap (protected)
+- `GET /api/dashboard/stats` - Get streak and activity statistics (protected)
+- `GET /api/dashboard/submission-chart` - Get the current user's submission chart (protected)
+- `GET /api/dashboard/leaderboard` - Get the global leaderboard (protected)
+- `POST /api/dashboard/evaluate` - Manually evaluate a challenge you own (protected; body: `{ "challengeId": "...", "date": "YYYY-MM-DD" }`, with `date` optional)
+
+### LeetCode
+
+- `POST /api/leetcode/session` - Store the current user's encrypted LeetCode session (protected; body includes `cookie`, optional `csrfToken` and `expiresAt`)
+- `GET /api/leetcode/session` - Check stored session status (protected)
+- `DELETE /api/leetcode/session` - Invalidate the stored session (protected)
+- `GET /api/leetcode/profile/:username` - Fetch profile, active years, calendar, and all-time activity needed for streak calculations (protected)
+- `GET /api/leetcode/submissions/:username?date=YYYY-MM-DD` - Fetch accepted submissions for one calendar date (protected; individual submission details are limited to LeetCode's recent-submission window)
+- `GET /api/leetcode/test/:username` - Test the LeetCode connection and fetch the latest accepted submissions (protected)
+- `GET /api/leetcode/problem/:titleSlug` - Fetch problem metadata (protected)
+
+### Notifications
+
+- `GET /api/notifications?unreadOnly=true` - List notifications; `unreadOnly` is optional (protected)
+- `GET /api/notifications/unread-count` - Get unread notification count (protected)
+- `PATCH /api/notifications/read-all` - Mark all notifications as read (protected)
+- `PATCH /api/notifications/:id/read` - Mark one notification as read (protected)
+
+### Payments
+
+- `POST /api/payments/create-order` - Create a Razorpay order for your penalty balance (protected; body: `{ "memberId": "...", "amount": 100 }`)
+- `POST /api/payments/verify` - Verify a Razorpay payment (protected; body: `razorpay_order_id`, `razorpay_payment_id`, and `razorpay_signature`)
+- `GET /api/payments/history/:memberId` - Get your payment history for a membership (protected)
+- `POST /api/payments/manual` - Record an offline payment (challenge owner only; body includes `challengeId`, `memberId`, `amount`, and optional `note`)
+- `GET /api/payments/ledger/:memberId` - Get a member's combined penalty and payment ledger (member or challenge owner)
 
 ### Health Check
 
+- `GET /` - API root and route-group overview (public)
 - `GET /health` - Server health status
 
 ## 🗄️ Database Schema

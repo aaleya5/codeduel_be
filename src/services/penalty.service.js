@@ -428,6 +428,10 @@ const disputePenalty = async (userId, penaltyId, reason) => {
     throw new AppError("You can only dispute your own penalties", 403);
   }
 
+  if (penalty.member.challenge.ownerId === userId) {
+    throw new AppError("Challenge owners cannot dispute their own penalties", 403);
+  }
+
   if (penalty.disputeStatus !== "NONE") {
     throw new AppError("This penalty already has a dispute", 400);
   }
@@ -509,6 +513,10 @@ const resolveDispute = async (ownerId, penaltyId, action, note) => {
 
   if (penalty.member.challenge.ownerId !== ownerId) {
     throw new AppError("Only the challenge owner can resolve disputes", 403);
+  }
+
+  if (penalty.member.userId === ownerId) {
+    throw new AppError("Challenge owners cannot resolve their own disputes", 403);
   }
 
   if (penalty.disputeStatus !== "PENDING") {

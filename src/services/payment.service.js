@@ -146,20 +146,44 @@ const verifyPayment = async (userId, payload) => {
     throw new AppError("Payment verification failed", 400);
   }
 
-  const [updatedPayment] = await prisma.$transaction([
-    prisma.payment.update({
-      where: { id: payment.id },
+  const result = await prisma.$transaction(async (transaction) => {
+    const claimed = await transaction.payment.updateMany({
+      where: { id: payment.id, status: "PENDING" },
       data: {
         status: "PAID",
         razorpayPaymentId: razorpay_payment_id,
         razorpaySignature: razorpay_signature,
       },
-    }),
-    prisma.challengeMember.update({
+    });
+
+    if (claimed.count !== 1) {
+      const currentPayment = await transaction.payment.findUnique({
+        where: { id: payment.id },
+      });
+      if (currentPayment?.status === "PAID") {
+        return { payment: currentPayment, credited: false };
+      }
+      throw new AppError("This payment is no longer payable", 409);
+    }
+
+    await transaction.challengeMember.update({
       where: { id: payment.memberId },
       data: { totalPaid: { increment: payment.amount } },
-    }),
-  ]);
+    });
+
+    return {
+      payment: await transaction.payment.findUnique({
+        where: { id: payment.id },
+      }),
+      credited: true,
+    };
+  });
+
+  if (!result.credited) {
+    return result.payment;
+  }
+
+  const updatedPayment = result.payment;
 
   await notificationService.createNotification(
     userId,

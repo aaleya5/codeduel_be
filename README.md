@@ -68,7 +68,7 @@ src/
 
 ### Prerequisites
 
-- Node.js (v16 or higher)
+- Node.js (v18 or higher; CI uses Node.js 22)
 - PostgreSQL (v12 or higher)
 - npm or yarn
 
@@ -137,6 +137,15 @@ Challenge calendar dates and evaluation cutoffs use `CHALLENGE_TIME_ZONE`
 (default `Asia/Kolkata`); persisted timestamps remain UTC. The cron job uses
 this same zone, so evaluations run at the configured `DAILY_EVALUATION_TIME`
 in the challenge time zone. Run the automated backend tests with `npm test`.
+
+### Automated tests
+
+Run `npm test` from `codeduel_be`. Tests use Node's built-in test runner and
+mock persistence/provider boundaries, so they do not require PostgreSQL,
+LeetCode credentials, or Razorpay keys. The CI workflow runs the backend suite
+in both UTC and `Asia/Kolkata`, validates/generates the Prisma client, and
+builds the frontend. These unit tests do not replace database-backed API
+integration tests.
 
 ## 📡 API Endpoints
 

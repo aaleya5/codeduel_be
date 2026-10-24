@@ -2,20 +2,38 @@ const express = require("express");
 const router = express.Router();
 const paymentController = require("../controllers/payment.controller");
 const { authenticate } = require("../middlewares/auth.middleware");
+const { paymentRateLimit } = require("../middlewares/rate-limit.middleware");
+
+/**
+ * @route   POST /api/payments/webhook
+ * @desc    Reconcile a captured Razorpay payment using the webhook signature
+ * @access  Razorpay webhook signature
+ */
+router.post("/webhook", paymentController.razorpayWebhook);
 
 /**
  * @route   POST /api/payments/create-order
  * @desc    Create a Razorpay order to pay down your own penalty balance
  * @access  Private
  */
-router.post("/create-order", authenticate, paymentController.createOrder);
+router.post(
+  "/create-order",
+  paymentRateLimit,
+  authenticate,
+  paymentController.createOrder
+);
 
 /**
  * @route   POST /api/payments/verify
  * @desc    Verify a completed Razorpay checkout and credit the balance
  * @access  Private
  */
-router.post("/verify", authenticate, paymentController.verifyPayment);
+router.post(
+  "/verify",
+  paymentRateLimit,
+  authenticate,
+  paymentController.verifyPayment
+);
 
 /**
  * @route   GET /api/payments/history/:memberId
@@ -33,7 +51,12 @@ router.get(
  * @desc    Owner records a payment received outside the app (cash, UPI, etc.)
  * @access  Private (challenge owner only)
  */
-router.post("/manual", authenticate, paymentController.recordManualPayment);
+router.post(
+  "/manual",
+  paymentRateLimit,
+  authenticate,
+  paymentController.recordManualPayment
+);
 
 /**
  * @route   GET /api/payments/ledger/:memberId

@@ -24,7 +24,7 @@ const startServer = async () => {
 
     // Attach Socket.IO to the same HTTP server for real-time updates
     // (live notifications, leaderboard/roster changes). See config/socket.js.
-    initializeSocket(server, config.corsOrigin);
+    initializeSocket(server, config.corsOrigins);
 
     // Initialize cron jobs
     cronManager.initializeCronJobs();

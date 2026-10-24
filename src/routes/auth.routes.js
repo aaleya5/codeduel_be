@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/auth.controller");
 const { authenticate } = require("../middlewares/auth.middleware");
+const { authRateLimit } = require("../middlewares/rate-limit.middleware");
 
 /**
  * @route   POST /api/auth/register
@@ -10,6 +11,7 @@ const { authenticate } = require("../middlewares/auth.middleware");
  */
 router.post(
   "/register",
+  authRateLimit,
   authController.validateRegister,
   authController.register
 );
@@ -19,7 +21,12 @@ router.post(
  * @desc    Login user
  * @access  Public
  */
-router.post("/login", authController.validateLogin, authController.login);
+router.post(
+  "/login",
+  authRateLimit,
+  authController.validateLogin,
+  authController.login
+);
 
 /**
  * @route   GET /api/auth/profile

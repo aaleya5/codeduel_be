@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const { config } = require("./config/env");
 const { errorHandler, notFound } = require("./middlewares/error.middleware");
 const logger = require("./utils/logger");
@@ -18,12 +19,28 @@ const paymentRoutes = require("./routes/payment.routes");
 const createApp = () => {
   const app = express();
 
+  app.use(
+    helmet({
+      strictTransportSecurity:
+        config.nodeEnv === "production" ? undefined : false,
+    })
+  );
+
   // CORS configuration
   app.use(
     cors({
-      origin: config.corsOrigin,
+      origin: (origin, callback) => {
+        callback(null, !origin || config.corsOrigins.includes(origin));
+      },
       credentials: true,
     })
+  );
+
+  // Razorpay signs the exact JSON bytes; retain the raw body for signature
+  // verification before the normal JSON parser consumes API requests.
+  app.use(
+    "/api/payments/webhook",
+    express.raw({ type: "application/json", limit: "100kb" })
   );
 
   // Body parser middleware

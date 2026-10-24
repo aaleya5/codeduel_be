@@ -180,13 +180,17 @@ const verifyPayment = async (userId, payload) => {
     throw new AppError("Payment verification failed", 400);
   }
 
+  return creditPendingPayment(payment, razorpay_payment_id, razorpay_signature);
+};
+
+const creditPendingPayment = async (payment, paymentId, signature = null) => {
   const result = await prisma.$transaction(async (transaction) => {
     const claimed = await transaction.payment.updateMany({
       where: { id: payment.id, status: "PENDING" },
       data: {
         status: "PAID",
-        razorpayPaymentId: razorpay_payment_id,
-        razorpaySignature: razorpay_signature,
+        razorpayPaymentId: paymentId,
+        ...(signature ? { razorpaySignature: signature } : {}),
       },
     });
 
@@ -222,24 +226,111 @@ const verifyPayment = async (userId, payload) => {
 
   const updatedPayment = result.payment;
 
-  await notificationService.createNotification(
-    userId,
-    "PAYMENT_RECEIVED",
-    "Payment received",
-    `Your payment of Rs. ${payment.amount} was received and credited to your balance.`,
-    payment.member.challengeId
-  );
-
-  emitToUser(userId, "payment:confirmed", {
-    memberId: payment.memberId,
-    amount: payment.amount,
-  });
+  try {
+    await notificationService.createNotification(
+      payment.member.userId,
+      "PAYMENT_RECEIVED",
+      "Payment received",
+      `Your payment of Rs. ${payment.amount} was received and credited to your balance.`,
+      payment.member.challengeId
+    );
+    emitToUser(payment.member.userId, "payment:confirmed", {
+      memberId: payment.memberId,
+      amount: payment.amount,
+    });
+  } catch (error) {
+    logger.error(
+      `Payment ${paymentId} was credited but confirmation notification failed:`,
+      error
+    );
+  }
 
   logger.info(
-    `Payment ${razorpay_payment_id} verified for member ${payment.memberId} (${payment.amount} INR)`
+    `Payment ${paymentId} verified for member ${payment.memberId} (${payment.amount} INR)`
   );
 
   return updatedPayment;
+};
+
+const processRazorpayWebhook = async (rawBody, signature) => {
+  if (!config.razorpayWebhookSecret) {
+    throw new AppError("Razorpay webhook is not configured", 503);
+  }
+  if (!Buffer.isBuffer(rawBody) || !signature) {
+    throw new AppError("Missing raw webhook body or signature", 400);
+  }
+
+  const expected = crypto
+    .createHmac("sha256", config.razorpayWebhookSecret)
+    .update(rawBody)
+    .digest();
+  let received;
+  try {
+    received = Buffer.from(signature, "hex");
+  } catch {
+    throw new AppError("Invalid Razorpay webhook signature", 400);
+  }
+  if (
+    received.length !== expected.length ||
+    !crypto.timingSafeEqual(expected, received)
+  ) {
+    throw new AppError("Invalid Razorpay webhook signature", 400);
+  }
+
+  let event;
+  try {
+    event = JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    throw new AppError("Invalid Razorpay webhook JSON", 400);
+  }
+
+  if (event.event !== "payment.captured") {
+    return { processed: false, reason: "unsupported_event" };
+  }
+
+  const capturedPayment = event.payload?.payment?.entity;
+  if (
+    capturedPayment?.status !== "captured" ||
+    typeof capturedPayment.id !== "string" ||
+    typeof capturedPayment.order_id !== "string" ||
+    !Number.isInteger(capturedPayment.amount) ||
+    capturedPayment.amount <= 0 ||
+    typeof capturedPayment.currency !== "string"
+  ) {
+    throw new AppError("Malformed Razorpay payment.captured event", 400);
+  }
+
+  const payment = await prisma.payment.findUnique({
+    where: { razorpayOrderId: capturedPayment.order_id },
+    include: { member: true },
+  });
+  if (!payment) {
+    logger.warn(
+      `Ignoring captured Razorpay payment for unknown order ${capturedPayment.order_id}`
+    );
+    return { processed: false, reason: "order_not_found" };
+  }
+
+  const expectedAmount = Math.round(payment.amount * 100);
+  if (
+    capturedPayment.amount !== expectedAmount ||
+    capturedPayment.currency !== payment.currency ||
+    payment.method !== "RAZORPAY"
+  ) {
+    logger.error(
+      `Ignoring captured Razorpay payment with mismatched order details for ${capturedPayment.order_id}`
+    );
+    return { processed: false, reason: "payment_mismatch" };
+  }
+
+  const result = await creditPendingPayment(
+    payment,
+    capturedPayment.id
+  );
+  return {
+    processed: result.status === "PAID",
+    duplicate: payment.status === "PAID",
+  };
 };
 
 /**
@@ -435,6 +526,7 @@ const getFullLedger = async (userId, memberId) => {
 module.exports = {
   createOrder,
   verifyPayment,
+  processRazorpayWebhook,
   getPaymentHistory,
   getOutstandingBalance,
   recordManualPayment,

@@ -24,9 +24,9 @@ const challengeRoom = (challengeId) => `challenge:${challengeId}`;
  * already listening on) and wire up JWT-based handshake authentication.
  * Call this once from server.js after the HTTP server is created.
  */
-const initializeSocket = (httpServer, corsOrigin) => {
+const initializeSocket = (httpServer, corsOrigins) => {
   io = new Server(httpServer, {
-    cors: { origin: corsOrigin, credentials: true },
+    cors: { origin: corsOrigins, credentials: true },
   });
 
   // Authenticate the socket handshake the same way HTTP requests are

@@ -146,6 +146,44 @@ so an unauthenticated/invalid callback cannot release its reservation. Pending
 orders still need provider-webhook reconciliation or a verified expiry process
 before their reservations can be released automatically.
 
+Authentication routes allow 10 requests per IP per 15-minute window, and
+payment order, verification, and manual-payment routes allow 20. These limits
+use the in-memory store and are per server process; for multiple backend
+instances, configure a shared rate-limit store. When running behind a reverse
+proxy, configure Express to trust only the known proxy chain so client IP-based
+limits use the actual client address.
+
+The backend allows browser requests only from exact origins listed in
+`CORS_ORIGINS`, a comma-separated list such as
+`https://app.example.com,https://staging.example.com`. In development, if the
+setting is omitted, `http://localhost:8080` and `http://localhost:5173` are
+allowed. Production startup requires an explicit non-empty allowlist. Origins
+must include the scheme and port when applicable, with no path or trailing
+slash. The deprecated `CORS_ORIGIN` variable remains accepted as a
+single-origin compatibility fallback.
+
+Helmet adds standard security headers to API responses. HTTP Strict Transport
+Security is enabled in production only; deploy production behind HTTPS before
+enabling `NODE_ENV=production`.
+
+For Razorpay test mode, configure `RAZORPAY_KEY_ID` and
+`RAZORPAY_KEY_SECRET` in the backend environment. Configure a webhook in the
+Razorpay dashboard pointing to `https://<your-api-host>/api/payments/webhook`,
+subscribe to `payment.captured`, and copy its generated secret into
+`RAZORPAY_WEBHOOK_SECRET`. Keep all three values private and use test-mode
+credentials while validating the flow. The webhook verifies the exact raw
+request body, checks the captured amount/currency/order against the local
+pending order, and credits/releases a reservation idempotently. Invalid
+signatures receive an error response; unrelated signed events are acknowledged
+without changing payment state.
+
+Razorpay payments settle to the merchant account associated with the configured
+keys; they are not automatically transferred to the challenge owner. Treat this
+as a central merchant payment flow, not peer-to-peer settlement. For
+friend-to-friend payments, use the challenge owner's manual UPI/offline
+recording flow until a compliant payout or marketplace integration is
+implemented.
+
 Daily evaluations persist the result, streak update, and any penalty ledger
 entry in one transaction. A duplicate run for the same member/challenge/day
 does not apply the penalty again. If a LeetCode submission fetch fails, the day
@@ -232,6 +270,7 @@ remain available.
 
 ### Payments
 
+- `POST /api/payments/webhook` - Reconcile a Razorpay `payment.captured` event (no JWT; requires a valid `X-Razorpay-Signature` generated with `RAZORPAY_WEBHOOK_SECRET`)
 - `POST /api/payments/create-order` - Create a Razorpay order for your penalty balance (protected; body: `{ "memberId": "...", "amount": 100 }`)
 - `POST /api/payments/verify` - Verify a Razorpay payment (protected; body: `razorpay_order_id`, `razorpay_payment_id`, and `razorpay_signature`)
 - `GET /api/payments/history/:memberId` - Get your payment history for a membership (protected)
@@ -365,7 +404,7 @@ Uses Winston for structured logging:
 
    - Set `NODE_ENV=production`
    - Use strong secrets for `JWT_SECRET` and `ENCRYPTION_KEY`
-   - Configure `CORS_ORIGIN` to your frontend URL
+   - Configure `CORS_ORIGINS` to the exact frontend origin(s)
 
 2. **Database**
 

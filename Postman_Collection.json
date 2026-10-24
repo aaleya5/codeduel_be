@@ -997,6 +997,23 @@
           "name": "Payments and Ledger",
           "item": [
             {
+              "name": "Razorpay Captured-Payment Webhook",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "X-Razorpay-Signature", "value": "{{razorpay_webhook_signature}}" }
+                ],
+                "description": "Webhook test only: configure the endpoint and payment.captured event in the Razorpay dashboard. Generate the signature from the exact raw body using RAZORPAY_WEBHOOK_SECRET; this placeholder is not a valid signature.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"payment.captured\",\n  \"payload\": {\n    \"payment\": {\n      \"entity\": {\n        \"id\": \"pay_test_id\",\n        \"order_id\": \"{{razorpay_order_id}}\",\n        \"status\": \"captured\",\n        \"amount\": 10000,\n        \"currency\": \"INR\"\n      }\n    }\n  }\n}"
+                },
+                "url": { "raw": "{{base_url}}/api/payments/webhook" }
+              },
+              "response": []
+            },
+            {
               "name": "Create Razorpay Payment Order",
               "request": {
                 "method": "POST",

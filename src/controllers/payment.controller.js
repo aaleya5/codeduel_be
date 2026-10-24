@@ -40,6 +40,22 @@ const verifyPayment = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Reconcile a captured Razorpay payment using the signed raw request body.
+ * POST /api/payments/webhook
+ */
+const razorpayWebhook = asyncHandler(async (req, res) => {
+  const result = await paymentService.processRazorpayWebhook(
+    req.body,
+    req.get("x-razorpay-signature")
+  );
+
+  res.status(200).json({
+    success: true,
+    ...result,
+  });
+});
+
+/**
  * Get a member's own payment history
  * GET /api/payments/history/:memberId
  */
@@ -100,6 +116,7 @@ const getFullLedger = asyncHandler(async (req, res) => {
 module.exports = {
   createOrder,
   verifyPayment,
+  razorpayWebhook,
   getPaymentHistory,
   recordManualPayment,
   getFullLedger,

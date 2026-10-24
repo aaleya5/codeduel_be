@@ -3,10 +3,22 @@ const dotenv = require("dotenv");
 // Load environment variables from .env file
 dotenv.config();
 
+const nodeEnv = process.env.NODE_ENV || "development";
+const defaultCorsOrigins =
+  nodeEnv === "production"
+    ? ""
+    : "http://localhost:8080,http://localhost:5173";
+const configuredCorsOrigins =
+  process.env.CORS_ORIGINS || process.env.CORS_ORIGIN;
+const corsOrigins =
+  configuredCorsOrigins === "*" && nodeEnv !== "production"
+    ? defaultCorsOrigins
+    : configuredCorsOrigins || defaultCorsOrigins;
+
 const config = {
   // Server Configuration
   port: process.env.PORT || 3000,
-  nodeEnv: process.env.NODE_ENV || "development",
+  nodeEnv,
 
   // Database Configuration
   databaseUrl: process.env.DATABASE_URL,
@@ -30,13 +42,44 @@ const config = {
   // Razorpay Configuration (penalty payments)
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
 
   // CORS Configuration
-  corsOrigin: process.env.CORS_ORIGIN || "*",
+  corsOrigins: corsOrigins
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+};
+
+const validateCorsConfig = () => {
+  if (config.nodeEnv === "production" && config.corsOrigins.length === 0) {
+    throw new Error(
+      "CORS_ORIGINS must contain the allowed frontend origin(s) in production"
+    );
+  }
+
+  for (const origin of config.corsOrigins) {
+    let parsedOrigin;
+    try {
+      parsedOrigin = new URL(origin);
+    } catch {
+      throw new Error(`Invalid CORS origin: ${origin}`);
+    }
+    if (
+      !["http:", "https:"].includes(parsedOrigin.protocol) ||
+      parsedOrigin.origin !== origin
+    ) {
+      throw new Error(
+        `Invalid CORS origin: ${origin}. Use an exact http(s) origin without a path.`
+      );
+    }
+  }
 };
 
 // Validate critical environment variables
 const validateConfig = () => {
+  validateCorsConfig();
+
   const required = ["databaseUrl", "jwtSecret", "encryptionKey"];
   const missing = required.filter((key) => !config[key]);
 
@@ -67,4 +110,9 @@ const validateRazorpayConfig = () => {
   }
 };
 
-module.exports = { config, validateConfig, validateRazorpayConfig };
+module.exports = {
+  config,
+  validateConfig,
+  validateCorsConfig,
+  validateRazorpayConfig,
+};
